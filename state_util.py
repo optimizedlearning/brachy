@@ -52,27 +52,36 @@ def ungroup_state(state):
     return grouped
 
 
-def merge_trees(*trees):
+def tree_merge_none(*trees):
     '''
     takes a list of trees and produces a single tree.
     Each input tree must have the same shape.
     The output tree will also have the same shape.
     
-    Each leaf of the output tree will be given by the first
-    non-None corresponding leaf value in `trees`.
+    Each leaf of the output tree will be determined by the list of corresponding
+    leaf values in `trees`: the value will simply be the first non-None value of this list.
+
+    otherwise, 
+     1. the first non-None, non-dictionary corresponding leaf value in `trees`.
+     2. if the first non-None leaf value in `trees` is a dict, then
     '''
 
     def find_value(*values):
         for v in values:
             if v is not None:
                 return v
-        
+                
         return None
     
     return tree_map(find_value, trees)
 
+def tree_split_by_keys(tree, keys=['params', 'constants']):
+    return [tree_extract_values(tree, key) for key in keys]
 
-def mask_tree(to_mask, aux, mask_fn):
+
+
+
+def tree_mask(to_mask, aux, mask_fn):
     '''
     creates a new tree by replacing leaves of `to_mask` with None.
     aux should be another tree whose shape is an extension of `to_mask`.
@@ -121,7 +130,7 @@ def mask_tree(to_mask, aux, mask_fn):
     }
 
     Note that
-    merge_trees(mask_tree(tree, ...), tree) is always equal to tree.
+    tree_merge_none(mask_tree(tree, ...), tree) is always equal to tree.
 
     '''
 
@@ -133,4 +142,4 @@ def split_trainable(state, aux):
     split a nn state tree into trainable and non-trainable params.
     '''
 
-    return mask_tree(state, aux, lambda a: a['trainable']), mask_tree(state, aux, lambda a: not a['trainable'])
+    return tree_mask(state, aux, lambda a: a['trainable']), mask_tree(state, aux, lambda a: not a['trainable'])

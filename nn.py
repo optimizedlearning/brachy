@@ -55,6 +55,8 @@ STATE_ORGANIZER_RESERVED = [
 ]
 
 
+
+
 class StateOrganizer:
 
     def __init__(
@@ -87,6 +89,29 @@ class StateOrganizer:
 
     def get_state(self):
         return self._state
+        # params = self._state['params']
+        # constants = self._state['constants']
+
+        # state = {
+        #     'params': {}
+        #     'constants': {}
+        # }
+
+        # for k in params:
+        #     if k not in constants:
+        #         state['params'][k] = params[k]
+        #     else:
+        #         state['params'][k] = {
+        #             'params': params[k],
+        #             'constants': constants[k]
+        #         }
+        
+        # for k in constants:
+        #     if k not in params:
+        #         state['constants'][k] = constants[k]
+        
+        # return state
+
 
     def get_apply_fns(self):
         return self._apply_fns
@@ -97,11 +122,18 @@ class StateOrganizer:
 
         if name in self._apply_fns:
             apply_fns = self._apply_fns
-            param_states = self._state['params']
+            params = self._state['params']
+            constants = self._state['constants']
             def apply(*args, **kwargs):
-                x, next_state = apply_fns[name](param_states[name], *args, **kwargs)
+                x, next_state = apply_fns[name](
+                    {
+                        'params': params[name],
+                        'constants': constants[name]
+                    },
+                    *args, **kwargs)
 
-                param_states[name] = next_state
+                params[name] = next_state['params']
+                constants[name] = next_state['constants']
                 return x
             return apply
         
@@ -138,7 +170,6 @@ class StateOrganizer:
         if name in STATE_ORGANIZER_RESERVED:
             return super().__setattr__(name, value)
 
-
         if name in self._state['constants']:
             self.state['constants'][name] = value
             return super().__setattr__(name, value)  
@@ -152,8 +183,11 @@ class StateOrganizer:
             state = value
             apply = None
         
-        self._state['params'][name] = state#['params']
-        # self._state['constants'][name] = state['constants']
+        if isinstance(state, dict):
+            self._state['params'][name] = state['params']
+            self._state['constants'][name] = state['constants']
+        else:
+            self._state['params'][name] = state
 
         if apply is not None:
             self._apply_fns[name] = apply
@@ -355,11 +389,11 @@ class StateOrganizer:
 
 
 
-class TModule(torch.nn.Module):
+# class TModule(torch.nn.Module):
 
-    def __init__(self, organizer):
-        super().__init__()
-        organizer.setup_t_module(self)
+#     def __init__(self, organizer):
+#         super().__init__()
+#         organizer.setup_t_module(self)
 
 
 class Identity:
