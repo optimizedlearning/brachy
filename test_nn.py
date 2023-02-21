@@ -228,7 +228,7 @@ def test_initialization(rng, module_gen, t_module_gen, get_t_state, sample_num=1
     base_t = None
     for _ in range(sample_num):
         rng, subkey = jax.random.split(rng)
-        state, apply, global_config = module_gen(subkey)
+        apply, state, global_config = module_gen(subkey)
         t_module = t_module_gen()
         t_state  = get_t_state(t_module)
 
@@ -270,7 +270,7 @@ class TestNN(unittest.TestCase):
 
 
     def test_identity(self):
-        state, apply, global_config = nn.Identity(None)
+        apply, state, global_config = nn.Identity(None)
 
         x = jnp.array([[1,2,3],[5,6,6],[7,8,9]], dtype=float)
 
@@ -306,7 +306,7 @@ class TestNN(unittest.TestCase):
 
 
 
-        _, apply, global_config = nn.Linear(3, 2, bias=True, rng=rng)
+        apply, _, global_config = nn.Linear(3, 2, bias=True, rng=rng)
         t_module = torch.nn.Linear(3, 2, bias=True)
         state = get_t_state(t_module)
 
@@ -344,7 +344,7 @@ class TestNN(unittest.TestCase):
         test_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
 
 
-        _, apply, global_config = nn.Conv2d(3, 4, 5, padding='same', bias=True, rng=rng)
+        apply, _, global_config = nn.Conv2d(3, 4, 5, padding='same', bias=True, rng=rng)
         t_module = torch.nn.Conv2d(3, 4, 5, padding='same', bias=True)
         state = get_t_state(t_module)
 
@@ -375,7 +375,7 @@ class TestNN(unittest.TestCase):
         t_module_gen = lambda : torch.nn.Embedding(500, 1000)
         test_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
 
-        _, apply, global_config = nn.Embedding(30, 10, rng=rng)
+        apply, _, global_config = nn.Embedding(30, 10, rng=rng)
         t_module = torch.nn.Embedding(30, 10)
         state = get_t_state(t_module)
 
@@ -413,8 +413,8 @@ class TestNN(unittest.TestCase):
                     nn.Linear(1000, 500),
                     nn.Linear(500, 50)
                 ]
-                state, apply, global_config = nn.Sequential(*chain)
-            return state, apply, global_config
+                apply, state, global_config = nn.Sequential(*chain)
+            return apply, state, global_config
 
         def t_module_gen():
             return torch.nn.Sequential(*[
@@ -431,7 +431,7 @@ class TestNN(unittest.TestCase):
                 nn.Linear(10, 20),
                 nn.Linear(20, 3)
             ]
-            _, apply, global_config = nn.Sequential(*chain)
+            apply, _, global_config = nn.Sequential(*chain)
 
         t_module = torch.nn.Sequential(*[
             torch.nn.Linear(3, 10),
@@ -471,7 +471,7 @@ class TestNN(unittest.TestCase):
 
         test_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
 
-        _, apply, global_config = nn.LayerNorm(3, rng=rng)
+        apply, _, global_config = nn.LayerNorm(3, rng=rng)
         t_module = torch.nn.LayerNorm(3)
         state = get_t_state(t_module)
         x = jnp.array([[1,2,3],[5,6,6],[7,8,9]], dtype=float)
@@ -505,7 +505,7 @@ class TestNN(unittest.TestCase):
     def test_nested_modules(self):
         rng = jax.random.PRNGKey(0)
     
-        _, apply, global_config = NextModule(5, 10, 20, 2, 10, 20, rng=rng)
+        apply, _, global_config = NextModule(5, 10, 20, 2, 10, 20, rng=rng)
 
         t_module = T_NextModule(5, 10, 20, 2, 10, 20)
 
@@ -528,7 +528,7 @@ class TestNN(unittest.TestCase):
     def test_dropout(self):
         rng = jax.random.PRNGKey(0)
 
-        state, apply, global_config = nn.Dropout(0.25, rng)
+        apply, state, global_config = nn.Dropout(0.25, rng)
 
 
         x = {
@@ -581,7 +581,7 @@ class TestNN(unittest.TestCase):
             return d, module.get_state()
 
     
-        state, apply, global_config = simplemodule(jax.random.PRNGKey(0))
+        apply, state, global_config = simplemodule(jax.random.PRNGKey(0))
         x = jnp.ones(5)
 
         y, new_state = apply(state, global_config, x)
@@ -605,7 +605,7 @@ class TestNN(unittest.TestCase):
     #     k_dim = 5
     #     v_dim = 4
 
-    #     state, apply, global_config = nn.MultiheadAttention(
+    #     apply, state, global_config = nn.MultiheadAttention(
     #         embed_dim=embed_dim,
     #         num_heads=num_heads,
     #         bias=bias,
@@ -621,7 +621,7 @@ class TestNN(unittest.TestCase):
     #     k = jnp.reshape(jnp.arange(B*T*k_dim), (B, T, k_dim))
     #     v = jnp.reshape(jnp.arange(B*T*v_dim), (B, T, v_dim))
 
-    #     y = apply(state, q, k, v,)
+    #     y = apply(state, global_config, q, k, v,)
 
 
 if __name__ == 'main':

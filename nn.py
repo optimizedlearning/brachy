@@ -72,7 +72,7 @@ class StateOrganizer:
             StateOrganizer,
             local_config=self.local_config,
             apply_fns=self._apply_fns)
-        return self._state, Partial(apply, pack), self._global_config
+        return Partial(apply, pack), self._state, self._global_config
 
     def get_state(self):
         return self._state
@@ -145,7 +145,7 @@ class StateOrganizer:
 
         # try to unpack:
         if isinstance(value, tuple) and len(value) == 3:
-            state, apply, global_config = value
+            apply, state, global_config = value
             if not callable(apply):
                 # this is some weird tuple parameter assignment I guess.
                 # maybe we should just forbid such behavior, but anyway...
@@ -174,7 +174,7 @@ def Identity(rng=None):
     }
 
     global_config = {}
-    return state, Identity_apply, global_config
+    return Identity_apply, state, global_config
 
 def Identity_apply(state, global_config, x):
     del global_config
@@ -213,7 +213,7 @@ def Linear(in_features, out_features, bias=True, dtype=None, rng=None):
         'constants': {},
     }
     global_config = {}
-    return state, Linear_apply, global_config
+    return Linear_apply, state, global_config
 
 
 def Linear_apply(state, global_config, x):
@@ -255,7 +255,7 @@ def Embedding(num_embeddings, embedding_dim, dtype=None, rng=None):
     }
 
     global_config = {}
-    return state, Embedding_apply, global_config
+    return Embedding_apply, state, global_config
 
 
 def Embedding_apply(state, global_config, idx):
@@ -290,8 +290,8 @@ def Sequential(*submodules, rng=None):
     
 
 
-    states = [s_a[0] for s_a in submodules]
-    applies = [s_a[1] for s_a in submodules]
+    applies = [s_a[0] for s_a in submodules]
+    states = [s_a[1] for s_a in submodules]
     configs = [s_a[2] for s_a in submodules]
 
     seq_state = group_state_list(states)
@@ -299,7 +299,7 @@ def Sequential(*submodules, rng=None):
 
     global_config = merge_configs(*configs)
 
-    return seq_state, apply_fn, global_config
+    return apply_fn, seq_state, global_config
 
 
 def Sequential_apply(applies, state, global_config, x):
@@ -404,7 +404,7 @@ def Conv2d(
         )
 
     global_config = {}
-    return state, Partial(Conv2d_apply), global_config
+    return Conv2d_apply, state, global_config
 
     
 def Conv2d_apply(state, global_config, x):
@@ -474,7 +474,7 @@ def Dropout(prob_zero=0.5, rng=None):
     global_config = {
         'train_mode': True
     }
-    return state, Dropout_apply, global_config
+    return Dropout_apply, state, global_config
 
 def Dropout_apply(state, global_config, x):
     '''
