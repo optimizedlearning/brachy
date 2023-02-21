@@ -1,6 +1,3 @@
-
-
-
 import jax
 import numpy as np
 from jax import numpy as jnp
@@ -96,13 +93,13 @@ class StateOrganizer:
             state = self.get_state()
             def apply(*args, **kwargs):
                 x, next_state = apply_fns[name](
-                    *args, 
-                    **kwargs,
-                    state={
+                    {
                         'params': params[name],
                         'constants': constants[name]
                     },
-                    global_config=global_config)
+                    global_config,
+                    *args, 
+                    **kwargs)
 
                 params[name] = next_state['params']
                 constants[name] = next_state['constants']
@@ -169,20 +166,19 @@ class StateOrganizer:
 
         return super().__setattr__(name, value)        
 
-class Identity:
-    def __new__(cls, rng=None):
+def Identity(rng=None):
 
-        state = {
-            'params': {},
-            'constants': {}
-        }
+    state = {
+        'params': {},
+        'constants': {}
+    }
 
-        global_config = {}
-        return state, cls.apply, global_config
+    global_config = {}
+    return state, Identity_apply, global_config
 
-    def apply(x, state, global_config):
-        del global_config
-        return x, state
+def Identity_apply(state, global_config, x):
+    del global_config
+    return x, state
 
 def Linear(in_features, out_features, bias=True, dtype=None, rng=None):
     if rng is None:
@@ -220,7 +216,7 @@ def Linear(in_features, out_features, bias=True, dtype=None, rng=None):
     return state, Linear_apply, global_config
 
 
-def Linear_apply(x, state, global_config={}):
+def Linear_apply(state, global_config, x):
     del global_config
     params = state['params']
 
@@ -262,7 +258,7 @@ def Embedding(num_embeddings, embedding_dim, dtype=None, rng=None):
     return state, Embedding_apply, global_config
 
 
-def Embedding_apply(idx, state, global_config={}):
+def Embedding_apply(state, global_config, idx):
     del global_config
     weight = state['params']['weight']
     return weight[idx, :], state
@@ -271,6 +267,9 @@ def Embedding_apply(idx, state, global_config={}):
 def Sequential(*submodules, rng=None):
     '''
     chains together a list of state/apply_fn pairs ala torch.nn.Sequential
+
+    Each submodule chained together like this must take as input one pytree
+    and return one pytree. No multiple arguments please for now.
     
     arguments:
         submodules: An iterable of (state, apply_fn, global_config) tuples
@@ -279,6 +278,7 @@ def Sequential(*submodules, rng=None):
 
         return_torch: if True, return a pytorch Sequential module in addition to the
             Hax sequential information.
+
     returns:
         seq_state, apply_fn, and possibly also t_state, t_module.
         
@@ -302,13 +302,13 @@ def Sequential(*submodules, rng=None):
     return seq_state, apply_fn, global_config
 
 
-def Sequential_apply(applies, x, state, global_config={}):
+def Sequential_apply(applies, state, global_config, x):
     states = ungroup_state(state)
 
     next_states = []
 
-    for s, f in zip(states, applies):
-        x, state_update = f(x, s, global_config)
+    for s, apply in zip(states, applies):
+        x, state_update = apply(s, global_config, x)
         next_states.append(state_update)
 
     return x, group_state_list(next_states)
@@ -329,7 +329,7 @@ def LayerNorm(normalized_shape, eps=1e-05, rng=None):
 
 
 
-def Layernorm_apply(pack_state, x, state, global_config={}):
+def Layernorm_apply(pack_state, state, global_config, x):
     module = pack_state(state, global_config)
 
     e_x = jnp.average(x, axis=-1, keepdims=True)
@@ -407,7 +407,7 @@ def Conv2d(
     return state, Partial(Conv2d_apply), global_config
 
     
-def Conv2d_apply(x, state, global_config={}):
+def Conv2d_apply(state, global_config, x):
     '''
     perform a convolution.
 
@@ -476,7 +476,7 @@ def Dropout(prob_zero=0.5, rng=None):
     }
     return state, Dropout_apply, global_config
 
-def Dropout_apply(x, state, global_config):
+def Dropout_apply(state, global_config, x):
     '''
     we will allow x to be a pytree for more generality, although
     that does make the implementation a bit more opaque
@@ -547,7 +547,7 @@ def MultiheadAttention(
     
     return organizer.create_module(MultiheadAttention_apply)
 
-def MultiheadAttention_apply(pack_state, state, q, k, v, mask, global_config={}):
+def MultiheadAttention_apply(pack_state, state, global_config, q, k, v, mask=None):
     # q is [B, T, C]
     # k is [B, T, K]
     # v is [B, T, V]
@@ -576,10 +576,14 @@ def MultiheadAttention_apply(pack_state, state, q, k, v, mask, global_config={})
 
     logits = einops.einsum(q, k, 'b n t1 c, b n t2 c -> b n t1 t2') # [B, N, T, H] x [B, N, T, H] -> [B, N, T, T]
 
-    broadcast_mask = jnp.broadcast_to(mask[:, :, :T, :T], logits.shape)
-    masked_logits = jnp.where(broadcast_mask, logits, -jnp.inf)
 
-    att = jax.nn.softmax(masked_logits, axis=-1) # [B, N, T, T] -> [B, N, T, T]
+    if mask is not  None:
+        broadcast_mask = jnp.broadcast_to(mask[:, :, :T, :T], logits.shape)
+        masked_logits = jnp.where(broadcast_mask, logits, -jnp.inf)
+
+        att = jax.nn.softmax(masked_logits, axis=-1) # [B, N, T, T] -> [B, N, T, T]
+    else:
+        att = jax.nn.softmax(logits, axis=-1)
 
     values = einops.einsum(att, v, 'b n t1 t2, b n t2 h -> b n t1 h') # [B, N, T, T] x [B, N, T, H] -> [B, N, T, H]
     values = einops.rearrange(values, 'b n t h -> b t (n h)') # [B N T H] -> [B T C]
@@ -612,7 +616,7 @@ def CausalSelfAttention(
 
     return organizer.create_module(CausalSelfAttention)
 
-def CausalSelfAttention_apply(pack_state, x, state, global_config={}):
+def CausalSelfAttention_apply(pack_state, state, global_config, x):
 
     module = pack_state(state, global_config)
 
@@ -621,7 +625,7 @@ def CausalSelfAttention_apply(pack_state, x, state, global_config={}):
     # should we actually be  storing this as a constant? then we'd need to know the
     # T ahead of time (although I guess we could fall back to this case if needed... 
     # the conditional will be ok even with jax.jit since it depends on the shape)
-    causal_mask = jnp.tril(jnp.ones(1, 1, T, T)) 
+    causal_mask = jnp.tril(jnp.ones((1, 1, T, T))) 
 
     return module.MHA(x, x, x, causal_mask)
 

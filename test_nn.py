@@ -85,7 +85,7 @@ def MyModule(vocab, embed, dim1, dim2, dim3=1, rng=None):
 
 
 
-def MyModule_apply(pack_state, x, state, global_config):
+def MyModule_apply(pack_state, state, global_config, x):
 
     module = pack_state(state, global_config)
 
@@ -143,7 +143,7 @@ def NextModule(vocab, embed, dim_next, dim_out, dim1, dim2, rng=None):
 
 
 
-def NextModule_apply(module, x, state, global_config):
+def NextModule_apply(module, state, global_config, x):
     module = module(state, global_config)
 
     x = module.trunk(x)
@@ -278,7 +278,7 @@ class TestNN(unittest.TestCase):
 
         x_t = torch.tensor(np.array(x))
 
-        y, _ = apply(x, state, global_config)
+        y, _ = apply(state, global_config, x)
 
         y_t = t_module(x_t).numpy()
 
@@ -314,8 +314,8 @@ class TestNN(unittest.TestCase):
         x_t = torch.tensor(np.array(x))
 
 
-        y, state = apply(x, state, global_config)
-        y2, _ = apply(x, state, global_config)
+        y, state = apply(state, global_config, x)
+        y2, _ = apply(state, global_config, x)
         y_t = t_module(x_t).detach().numpy()
 
         self.assertTrue(allclose(y_t, y))
@@ -351,8 +351,8 @@ class TestNN(unittest.TestCase):
         x = jnp.array(np.random.normal(np.ones((2, 3, 6,7))), dtype=jnp.float32)
         x_t = torch.tensor(np.array(x))
 
-        y, state = apply(x, state, global_config)
-        y2, _ = apply(x, state, global_config)
+        y, state = apply(state, global_config, x)
+        y2, _ = apply(state, global_config, x)
         y_t = t_module(x_t).detach().numpy()
 
         self.assertTrue(allclose(y_t, y))
@@ -382,8 +382,8 @@ class TestNN(unittest.TestCase):
         x = jnp.array([0, 2, 29, 7, 4])
         x_t = torch.tensor(np.array(x))
 
-        y, state = apply(x, state, global_config)
-        y2, _ = apply(x, state, global_config)
+        y, state = apply(state, global_config, x)
+        y2, _ = apply(state, global_config, x)
         y_t = t_module(x_t).detach().numpy()
 
         self.assertTrue(allclose(y_t, y))
@@ -443,8 +443,8 @@ class TestNN(unittest.TestCase):
         x = jnp.array([[1,2,3],[5,6,6],[7,8,9]], dtype=float)
         x_t = torch.tensor(np.array(x))
 
-        y, state = apply(x, state, global_config)
-        y2, _ = apply(x, state, global_config)
+        y, state = apply(state, global_config, x)
+        y2, _ = apply(state, global_config, x)
         y_t = t_module(x_t).detach().numpy()
 
         self.assertTrue(allclose(y_t, y))
@@ -477,8 +477,8 @@ class TestNN(unittest.TestCase):
         x = jnp.array([[1,2,3],[5,6,6],[7,8,9]], dtype=float)
         x_t = torch.tensor(np.array(x))
 
-        y, state = apply(x, state, global_config)
-        y2, _ = apply(x, state, global_config)
+        y, state = apply(state, global_config, x)
+        y2, _ = apply(state, global_config, x)
         y_t = t_module(x_t).detach().numpy()
 
         self.assertTrue(allclose(y_t, y))
@@ -517,8 +517,8 @@ class TestNN(unittest.TestCase):
         x = jnp.ones(10, dtype=int)
         x_t = torch.tensor(np.array(x))
 
-        y, state = apply(x, state, global_config)
-        y2, _ = apply(x, state, global_config)
+        y, state = apply(state, global_config, x)
+        y2, _ = apply(state, global_config, x)
         y_t = t_module(x_t).detach().numpy()
 
         self.assertTrue(allclose(y_t, y))
@@ -544,7 +544,7 @@ class TestNN(unittest.TestCase):
         num_trials = 2000
 
         for _ in range(num_trials):
-            drop, state = apply(x, state, global_config)
+            drop, state = apply(state, global_config, x)
             sum_dropout = tree_map(
                 lambda a, b: a + b, sum_dropout, drop
             )
@@ -556,12 +556,12 @@ class TestNN(unittest.TestCase):
         assert tree_close(mean_dropout, x, tol=0.05), f"not close: {mean_dropout}, {x}"
 
         
-        no_train_dropout, state = apply(x, state, {'train_mode': False})
+        no_train_dropout, state = apply(state, {'train_mode': False}, x)
 
         assert tree_close(no_train_dropout, x, tol=1e-5), f"dropout still applied when in eval mode"
 
 
-    def test_global_config(self):
+    def test_train_mode(self):
 
         def simplemodule(rng):
             organizer = nn.StateOrganizer()
@@ -571,7 +571,7 @@ class TestNN(unittest.TestCase):
 
             return organizer.create_module(simpleapply)
 
-        def simpleapply(pack_state, x, state, global_config):
+        def simpleapply(pack_state, state, global_config, x):
             module = pack_state(state, global_config)
 
             m = x * module.mul
@@ -584,16 +584,44 @@ class TestNN(unittest.TestCase):
         state, apply, global_config = simplemodule(jax.random.PRNGKey(0))
         x = jnp.ones(5)
 
-        y, new_state = apply(x, state, global_config)
+        y, new_state = apply(state, global_config, x)
 
-        y2, _ = apply(x, new_state, global_config)
+        y2, _ = apply(new_state, global_config, x)
 
-        y_eval, _ = apply(x, new_state, {'train_mode': False})
+        y_eval, _ = apply(new_state, {'train_mode': False}, x)
 
         assert jnp.linalg.norm(y-5*x) > 1.0
         assert jnp.linalg.norm(y-5*y2) > 1.0
         assert jnp.allclose(y_eval, 5*x)
 
+
+    # def test_multiheadattention(self):
+
+    #     rng = jax.random.PRNGKey(0)
+
+    #     embed_dim = 10
+    #     num_heads = 2
+    #     bias = True
+    #     k_dim = 5
+    #     v_dim = 4
+
+    #     state, apply, global_config = nn.MultiheadAttention(
+    #         embed_dim=embed_dim,
+    #         num_heads=num_heads,
+    #         bias=bias,
+    #         k_dim=k_dim,
+    #         v_dim=v_dim,
+    #         rng=rng
+    #     )
+
+    #     B = 3
+    #     T = 6
+
+    #     q = jnp.reshape(jnp.arange(B*T*embed_dim), (B, T, embed_dim))
+    #     k = jnp.reshape(jnp.arange(B*T*k_dim), (B, T, k_dim))
+    #     v = jnp.reshape(jnp.arange(B*T*v_dim), (B, T, v_dim))
+
+    #     y = apply(state, q, k, v,)
 
 
 if __name__ == 'main':
