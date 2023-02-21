@@ -50,9 +50,12 @@ def tree_reduce_max(a):
 def tree_min(a, b):
     return tree_map(lambda x, y: jnp.minimum(x,y), a, b)
 
-
-def tree_small(a, tol=1e-4):
-    tree_norm(a) < tol
+def tree_close(a, b, tol=1e-4):
+    return tree_reduce_max(
+        tree_map(
+            lambda x, y: 2*jnp.linalg.norm(x-y)/(jnp.linalg.norm(x) + jnp.linalg.norm(y)+1e-8), 
+            a, b)
+    ) < tol
 
 def zeros_like(a):
     return tree_map(lambda x: jnp.zeros_like(x), a)
@@ -230,16 +233,16 @@ def test_initialization(rng, module_gen, t_module_gen, get_t_state, sample_num=1
         t_state  = get_t_state(t_module)
 
         if mean is None:
-            mean = zeros_like(state)
-            var = zeros_like(state)
-            base = zeros_like(state)
-            base_t = zeros_like(state)
+            mean = zeros_like(state['params'])
+            var = zeros_like(state['params'])
+            base = zeros_like(state['params'])
+            base_t = zeros_like(state['params'])
 
 
-        mean = tree_sub_accum(mean, state, t_state)
-        var = tree_square_sub_accum(var, state, t_state)
-        base = tree_square_accum(base, state)
-        base_t = tree_square_accum(base, t_state)
+        mean = tree_sub_accum(mean, state['params'], t_state['params'])
+        var = tree_square_sub_accum(var, state['params'], t_state['params'])
+        base = tree_square_accum(base, state['params'])
+        base_t = tree_square_accum(base, t_state['params'])
 
 
     mean = tree_norm(tree_scale(mean, 1.0/(sample_num * tree_size(mean))))
@@ -328,7 +331,12 @@ class TestNN(unittest.TestCase):
                     'weight': t_to_np(t_module.weight),
                     'bias': t_to_np(t_module.bias)
                 },
-                'constants': {}
+                'constants': {
+                    'padding': t_module.padding,
+                    'stride': t_module.stride,
+                    'dilation': t_module.dilation,
+                    'feature_group_count': t_module.groups,                    
+                }
             }
 
         module_gen = lambda r: nn.Conv2d(30, 40, 50, padding='same', bias=True, rng=r)
@@ -453,7 +461,9 @@ class TestNN(unittest.TestCase):
                     'weight': t_to_np(t_module.weight),
                     'bias': t_to_np(t_module.bias)
                 },
-                'constants': {}
+                'constants': {
+                    'eps': 1e-5
+                }
             }
 
         module_gen = lambda r: nn.LayerNorm(300, rng=r)
@@ -513,6 +523,76 @@ class TestNN(unittest.TestCase):
 
         self.assertTrue(allclose(y_t, y))
         self.assertTrue(allclose(y_t, y2))
+
+
+    def test_dropout(self):
+        rng = jax.random.PRNGKey(0)
+
+        state, apply, global_config = nn.Dropout(0.25, rng)
+
+
+        x = {
+            'h': jnp.ones((10,2)),
+            'k': {
+                'l': jnp.ones(5),
+                'p': jnp.ones(9)
+            }
+        }
+
+        sum_dropout = zeros_like(x)
+
+        num_trials = 2000
+
+        for _ in range(num_trials):
+            drop, state = apply(x, state, global_config)
+            sum_dropout = tree_map(
+                lambda a, b: a + b, sum_dropout, drop
+            )
+
+        mean_dropout = tree_map(
+            lambda z: z/num_trials, sum_dropout
+        )
+
+        assert tree_close(mean_dropout, x, tol=0.05), f"not close: {mean_dropout}, {x}"
+
+        
+        no_train_dropout, state = apply(x, state, {'train_mode': False})
+
+        assert tree_close(no_train_dropout, x, tol=1e-5), f"dropout still applied when in eval mode"
+
+
+    def test_global_config(self):
+
+        def simplemodule(rng):
+            organizer = nn.StateOrganizer()
+
+            organizer.mul = 5.0
+            organizer.dropout = nn.Dropout(0.4, rng=rng)
+
+            return organizer.create_module(simpleapply)
+
+        def simpleapply(pack_state, x, state, global_config):
+            module = pack_state(state, global_config)
+
+            m = x * module.mul
+
+            d = module.dropout(m)
+
+            return d, module.get_state()
+
+    
+        state, apply, global_config = simplemodule(jax.random.PRNGKey(0))
+        x = jnp.ones(5)
+
+        y, new_state = apply(x, state, global_config)
+
+        y2, _ = apply(x, new_state, global_config)
+
+        y_eval, _ = apply(x, new_state, {'train_mode': False})
+
+        assert jnp.linalg.norm(y-5*x) > 1.0
+        assert jnp.linalg.norm(y-5*y2) > 1.0
+        assert jnp.allclose(y_eval, 5*x)
 
 
 

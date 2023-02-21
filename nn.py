@@ -4,7 +4,7 @@
 import jax
 import numpy as np
 from jax import numpy as jnp
-from jax.tree_util import tree_map
+from jax.tree_util import tree_map, tree_flatten, tree_unflatten
 
 import rng_util
 
@@ -27,32 +27,6 @@ def merge_configs(*configs):
         ret.update(config)
 
     return ret
-
-# import torch
-
-# class return_torch_hack:
-#     def __init__(self, value):
-#         self.value = value
-
-# RETURN_TORCH = return_torch_hack(True)
-
-
-# class set_return_torch:
-#     def __init__(self, value):
-#         self.value = value
-         
-#     def __enter__(self):
-#         self.prev_value = RETURN_TORCH
-#         RETURN_TORCH.value = self.value
-#         return self
-     
-#     def __exit__(self, exc_type, exc_value, exc_traceback):
-#         RETURN_TORCH.value = self.prev_value
-
-
-# def t_to_jnp(tensor):
-#     return jnp.array(tensor.detach().numpy())
-
 
 
 STATE_ORGANIZER_RESERVED = [
@@ -105,29 +79,6 @@ class StateOrganizer:
 
     def get_state(self):
         return self._state
-        # params = self._state['params']
-        # constants = self._state['constants']
-
-        # state = {
-        #     'params': {}
-        #     'constants': {}
-        # }
-
-        # for k in params:
-        #     if k not in constants:
-        #         state['params'][k] = params[k]
-        #     else:
-        #         state['params'][k] = {
-        #             'params': params[k],
-        #             'constants': constants[k]
-        #         }
-        
-        # for k in constants:
-        #     if k not in params:
-        #         state['constants'][k] = constants[k]
-        
-        # return state
-
 
     def get_apply_fns(self):
         return self._apply_fns
@@ -146,12 +97,12 @@ class StateOrganizer:
             def apply(*args, **kwargs):
                 x, next_state = apply_fns[name](
                     *args, 
+                    **kwargs,
                     state={
                         'params': params[name],
                         'constants': constants[name]
                     },
-                    global_config=global_config,
-                    **kwargs)
+                    global_config=global_config)
 
                 params[name] = next_state['params']
                 constants[name] = next_state['constants']
@@ -365,11 +316,14 @@ def Sequential_apply(applies, x, state, global_config={}):
 
 def LayerNorm(normalized_shape, eps=1e-05, rng=None):
 
-    organizer = StateOrganizer(local_config={'eps': eps})
+    organizer = StateOrganizer()
 
     organizer.weight = jnp.ones(normalized_shape)
 
     organizer.bias = jnp.zeros(normalized_shape)
+
+    organizer.register_buffer('eps', eps)
+
     return organizer.create_module(Layernorm_apply)
 
 
@@ -382,7 +336,7 @@ def Layernorm_apply(pack_state, x, state, global_config={}):
     v_x = jnp.average((x-e_x)**2, axis=-1, keepdims=True)
     
 
-    ln = (x - e_x)/jnp.sqrt(v_x + module.local_config['eps']) * module.weight + module.bias
+    ln = (x - e_x)/jnp.sqrt(v_x + module.eps) * module.weight + module.bias
 
     return ln, module.get_state()
 
@@ -414,7 +368,12 @@ def Conv2d(
     
     state = {
         'params': {},
-        'constants': {}
+        'constants': {
+            'padding': padding,
+            'stride': stride,
+            'dilation': dilation,
+            'feature_group_count': groups,
+        }
     }
 
     k = groups / (in_channels * kernel_size[0] * kernel_size[1])
@@ -435,14 +394,6 @@ def Conv2d(
     if isinstance(padding, int):
         padding = ((padding, padding), (padding, padding))
 
-    local_config = {
-        'padding': padding,
-        'stride': stride,
-        'dilation': dilation,
-        'feature_group_count': groups,
-        'padding_mode': padding_mode
-    }
-
     if bias:
         rng, subkey = jax.random.split(rng)
         state['params']['bias'] = jax.random.uniform(
@@ -453,16 +404,10 @@ def Conv2d(
         )
 
     global_config = {}
-    return state, Partial(Conv2d_apply, local_config=local_config), global_config
+    return state, Partial(Conv2d_apply), global_config
 
     
-def Conv2d_apply(x, state, global_config={}, local_config={
-        'padding': 0,
-        'stride': 1,
-        'dilation': 1,
-        'feature_group_count': 1,
-        'padding_mode': 'same'
-    }):
+def Conv2d_apply(x, state, global_config={}):
     '''
     perform a convolution.
 
@@ -486,7 +431,8 @@ def Conv2d_apply(x, state, global_config={}, local_config={
     
     weight = state['params']['weight']
 
-    constants = SimpleNamespace(**local_config)
+    constants = SimpleNamespace(**state['constants'])
+    
 
     
 
@@ -512,6 +458,55 @@ def Conv2d_apply(x, state, global_config={}, local_config={
         conv = conv + einops.rearrange(bias, '(N C H W) -> N C H W', N=1, H=1, W=1)
 
     return conv, state
+
+
+def Dropout(prob_zero=0.5, rng=None):
+    if rng is None:
+        rng = rng_util.split()
+
+    state = {
+        'params': {},
+        'constants': {
+            'rng': rng,
+            'prob_zero': prob_zero
+        }
+    }
+    global_config = {
+        'train_mode': True
+    }
+    return state, Dropout_apply, global_config
+
+def Dropout_apply(x, state, global_config):
+    '''
+    we will allow x to be a pytree for more generality, although
+    that does make the implementation a bit more opaque
+    '''
+    if not global_config['train_mode']:
+        return x, state
+
+    rng = state['constants']['rng']
+    prob_zero = state['constants']['prob_zero']
+
+    prob_one = 1.0 - prob_zero
+
+    x_flat, treedef = tree_flatten(x)
+
+    rng, *subkeys = jax.random.split(rng, len(x_flat)+1)
+
+    dropout_flat = [v * jax.random.bernoulli(k, prob_one)/prob_one for v, k in zip(x_flat, subkeys)]
+
+    x_dropout = tree_unflatten(treedef, dropout_flat)
+
+    next_state = {
+        'params': {},
+        'constants': {
+            'rng': rng,
+            'prob_zero': prob_zero
+        }
+    }
+
+    return x_dropout, next_state
+
 
 
 # ok, I wanted this to be the same as torch, but my god their implemention of
