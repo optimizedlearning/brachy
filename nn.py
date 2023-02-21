@@ -101,7 +101,7 @@ class StateOrganizer:
             StateOrganizer,
             local_config=self.local_config,
             apply_fns=self._apply_fns)
-        return self._state, Partial(apply, pack, local_config=dict(self.local_config)), self._global_config
+        return self._state, Partial(apply, pack), self._global_config
 
     def get_state(self):
         return self._state
@@ -142,7 +142,6 @@ class StateOrganizer:
             params = self._state['params']
             constants = self._state['constants']
             global_config = self._global_config
-            local_config = self.local_config
             state = self.get_state()
             def apply(*args, **kwargs):
                 x, next_state = apply_fns[name](
@@ -152,7 +151,6 @@ class StateOrganizer:
                         'constants': constants[name]
                     },
                     global_config=global_config,
-                    local_config=local_config,
                     **kwargs)
 
                 params[name] = next_state['params']
@@ -271,7 +269,7 @@ def Linear(in_features, out_features, bias=True, dtype=None, rng=None):
     return state, Linear_apply, global_config
 
 
-def Linear_apply(x, state, global_config={}, local_config={}):
+def Linear_apply(x, state, global_config={}):
     del global_config
     params = state['params']
 
@@ -313,7 +311,7 @@ def Embedding(num_embeddings, embedding_dim, dtype=None, rng=None):
     return state, Embedding_apply, global_config
 
 
-def Embedding_apply(idx, state, global_config={}, local_config={}):
+def Embedding_apply(idx, state, global_config={}):
     del global_config
     weight = state['params']['weight']
     return weight[idx, :], state
@@ -353,7 +351,7 @@ def Sequential(*submodules, rng=None):
     return seq_state, apply_fn, global_config
 
 
-def Sequential_apply(applies, x, state, global_config={}, local_config={}):
+def Sequential_apply(applies, x, state, global_config={}):
     states = ungroup_state(state)
 
     next_states = []
@@ -377,7 +375,7 @@ def LayerNorm(normalized_shape, eps=1e-05, rng=None):
 
 
 
-def Layernorm_apply(pack_state, x, state, global_config={}, local_config={}):
+def Layernorm_apply(pack_state, x, state, global_config={}):
     module = pack_state(state, global_config)
 
     e_x = jnp.average(x, axis=-1, keepdims=True)
@@ -554,9 +552,7 @@ def MultiheadAttention(
     
     return organizer.create_module(MultiheadAttention_apply)
 
-def MultiheadAttention_apply(pack_state, state, q, k, v, mask, global_config={}, local_config={
-        'num_heads': 1
-    }):
+def MultiheadAttention_apply(pack_state, state, q, k, v, mask, global_config={}):
     # q is [B, T, C]
     # k is [B, T, K]
     # v is [B, T, V]
@@ -568,9 +564,10 @@ def MultiheadAttention_apply(pack_state, state, q, k, v, mask, global_config={},
 
     *_, T, C = q.shape
 
-    num_heads = config['num_heads']
-
     module = pack_state(state, global_config)
+
+
+    num_heads = module.local_config['num_heads']
 
     q = module.q_proj(x)
     k = module.k_proj(x)
@@ -620,7 +617,7 @@ def CausalSelfAttention(
 
     return organizer.create_module(CausalSelfAttention)
 
-def CausalSelfAttention_apply(pack_state, x, state, global_config={}, local_config={}):
+def CausalSelfAttention_apply(pack_state, x, state, global_config={}):
 
     module = pack_state(state, global_config)
 
