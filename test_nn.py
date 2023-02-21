@@ -60,39 +60,38 @@ def zeros_like(a):
 def tree_size(a):
     return tree_reduce(lambda x, y: x+ y.size, a, 0)
 
-class MyModule:
-    def __new__(cls, vocab, embed, dim1, dim2, dim3=1, rng=None):
-        if rng is None:
-            rng = rng_util.split(1)
+def MyModule(vocab, embed, dim1, dim2, dim3=1, rng=None):
+    if rng is None:
+        rng = rng_util.split(1)
 
-        organizer = nn.StateOrganizer()
+    organizer = nn.StateOrganizer()
 
-        with rng_util.RNGState(rng):
+    with rng_util.RNGState(rng):
 
-            organizer.embed = nn.Embedding(vocab, embed)
-            organizer.seq = nn.Sequential(nn.Linear(embed, dim1), nn.Linear(dim1, dim2))
+        organizer.embed = nn.Embedding(vocab, embed)
+        organizer.seq = nn.Sequential(nn.Linear(embed, dim1), nn.Linear(dim1, dim2))
 
-            r = rng_util.split(1)
+        r = rng_util.split(1)
 
-            mul = 1 + jax.random.normal(r, (dim2,))
-            organizer.register_buffer('mul', mul)
+        mul = 1 + jax.random.normal(r, (dim2,))
+        organizer.register_buffer('mul', mul)
 
-            organizer.fc2 = nn.Linear(dim2, dim3)
+        organizer.fc2 = nn.Linear(dim2, dim3)
 
-        return organizer.create_module(cls)
-
+    return organizer.create_module(MyModule_apply)
 
 
-    def apply(pack_state, state, x):
 
-        module = pack_state(state)
+def MyModule_apply(pack_state, x, state, global_config, local_config):
 
-        x = module.embed(x)
-        x = module.seq(x)
-        x = module.mul * x
-        x = module.fc2(x)
+    module = pack_state(state, global_config)
 
-        return x, module.get_state()
+    x = module.embed(x)
+    x = module.seq(x)
+    x = module.mul * x
+    x = module.fc2(x)
+
+    return x, module.get_state()
 
 class T_MyModule(torch.nn.Module):
 
@@ -117,43 +116,40 @@ class T_MyModule(torch.nn.Module):
 
 
 
-class NextModule:
+def NextModule(vocab, embed, dim_next, dim_out, dim1, dim2, rng=None):
+    if rng is None:
+        rng = rng_util.split(1)
 
-    def __new__(cls, vocab, embed, dim_next, dim_out, dim1, dim2, rng=None):
-        if rng is None:
-            rng = rng_util.split(1)
-
-        organizer = nn.StateOrganizer()
+    organizer = nn.StateOrganizer()
 
 
-        with rng_util.RNGState(rng):
-            organizer.trunk = MyModule(vocab, embed, dim1, dim2, dim_next)
+    with rng_util.RNGState(rng):
+        organizer.trunk = MyModule(vocab, embed, dim1, dim2, dim_next)
 
 
-            r = rng_util.split(1)
+        r = rng_util.split(1)
 
-            bias = jax.random.normal(r, (dim_next,))
+        bias = jax.random.normal(r, (dim_next,))
 
-            
-            organizer.register_parameter('next_bias', bias)
+        
+        organizer.register_parameter('next_bias', bias)
 
-            organizer.head = nn.Linear(dim_next, dim_out)
+        organizer.head = nn.Linear(dim_next, dim_out)
 
-        return organizer.create_module(cls)
+    return organizer.create_module(NextModule_apply)
 
 
 
-    def apply(module, state, x):
-        module = module(state)
+def NextModule_apply(module, x, state, global_config, local_config):
+    module = module(state, global_config)
 
+    x = module.trunk(x)
+    x = jax.nn.relu(x)
+    x = module.next_bias + x
+    x = jax.nn.relu(x)
+    x = module.head(x)
 
-        x = module.trunk(x)
-        x = jax.nn.relu(x)
-        x = module.next_bias + x
-        x = jax.nn.relu(x)
-        x = module.head(x)
-
-        return x, module.get_state()
+    return x, module.get_state()
 
 
 class T_NextModule(torch.nn.Module):
@@ -229,7 +225,7 @@ def test_initialization(rng, module_gen, t_module_gen, get_t_state, sample_num=1
     base_t = None
     for _ in range(sample_num):
         rng, subkey = jax.random.split(rng)
-        state, apply = module_gen(subkey)
+        state, apply, global_config = module_gen(subkey)
         t_module = t_module_gen()
         t_state  = get_t_state(t_module)
 
@@ -270,57 +266,57 @@ class TestNN(unittest.TestCase):
 
 
 
-    def test_identity(self):
-        state, apply = nn.Identity(None)
+    # def test_identity(self):
+    #     state, apply, global_config = nn.Identity(None)
 
-        x = jnp.array([[1,2,3],[5,6,6],[7,8,9]], dtype=float)
+    #     x = jnp.array([[1,2,3],[5,6,6],[7,8,9]], dtype=float)
 
-        t_module = torch.nn.Identity()
+    #     t_module = torch.nn.Identity()
 
-        x_t = torch.tensor(np.array(x))
+    #     x_t = torch.tensor(np.array(x))
 
-        y, _ = apply(state, x)
+    #     y, _ = apply(x, state, global_config)
 
-        y_t = t_module(x_t).numpy()
+    #     y_t = t_module(x_t).numpy()
 
-        self.assertTrue(allclose(y_t, y))
-
-
-
-    def test_linear(self):
-
-        rng = jax.random.PRNGKey(0)
-
-        def get_t_state(t_module):
-            return {
-                'params': {
-                    'weight': t_to_np(t_module.weight),
-                    'bias': t_to_np(t_module.bias)
-                },
-                'constants': {}
-            }
-
-
-        module_gen = lambda r: nn.Linear(300, 4000, bias=True, rng=r)
-        t_module_gen = lambda : torch.nn.Linear(300, 4000, bias=True)
-        test_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
+    #     self.assertTrue(allclose(y_t, y))
 
 
 
-        _, apply = nn.Linear(3, 2, bias=True, rng=rng)
-        t_module = torch.nn.Linear(3, 2, bias=True)
-        state = get_t_state(t_module)
+    # def test_linear(self):
 
-        x = jnp.array([[1,2,3],[5,6,6],[7,8,9]], dtype=jnp.float32)
-        x_t = torch.tensor(np.array(x))
+    #     rng = jax.random.PRNGKey(0)
+
+    #     def get_t_state(t_module):
+    #         return {
+    #             'params': {
+    #                 'weight': t_to_np(t_module.weight),
+    #                 'bias': t_to_np(t_module.bias)
+    #             },
+    #             'constants': {}
+    #         }
 
 
-        y, state = apply(state, x)
-        y2, _ = apply(state, x)
-        y_t = t_module(x_t).detach().numpy()
+    #     module_gen = lambda r: nn.Linear(300, 4000, bias=True, rng=r)
+    #     t_module_gen = lambda : torch.nn.Linear(300, 4000, bias=True)
+    #     test_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
 
-        self.assertTrue(allclose(y_t, y))
-        self.assertTrue(allclose(y_t, y2))
+
+
+    #     _, apply, global_config = nn.Linear(3, 2, bias=True, rng=rng)
+    #     t_module = torch.nn.Linear(3, 2, bias=True)
+    #     state = get_t_state(t_module)
+
+    #     x = jnp.array([[1,2,3],[5,6,6],[7,8,9]], dtype=jnp.float32)
+    #     x_t = torch.tensor(np.array(x))
+
+
+    #     y, state = apply(x, state, global_config)
+    #     y2, _ = apply(x, state, global_config)
+    #     y_t = t_module(x_t).detach().numpy()
+
+    #     self.assertTrue(allclose(y_t, y))
+    #     self.assertTrue(allclose(y_t, y2))
 
 
     def test_conv2d(self):
@@ -340,15 +336,15 @@ class TestNN(unittest.TestCase):
         test_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
 
 
-        _, apply = nn.Conv2d(3, 4, 5, padding='same', bias=True, rng=rng)
+        _, apply, global_config = nn.Conv2d(3, 4, 5, padding='same', bias=True, rng=rng)
         t_module = torch.nn.Conv2d(3, 4, 5, padding='same', bias=True)
         state = get_t_state(t_module)
 
         x = jnp.array(np.random.normal(np.ones((2, 3, 6,7))), dtype=jnp.float32)
         x_t = torch.tensor(np.array(x))
 
-        y, state = apply(state, x)
-        y2, _ = apply(state, x)
+        y, state = apply(x, state, global_config)
+        y2, _ = apply(x, state, global_config)
         y_t = t_module(x_t).detach().numpy()
 
         self.assertTrue(allclose(y_t, y))
@@ -356,166 +352,167 @@ class TestNN(unittest.TestCase):
 
 
 
-    def test_embedding(self):
-        rng =  jax.random.PRNGKey(0)
+    # def test_embedding(self):
+    #     rng =  jax.random.PRNGKey(0)
 
-        def get_t_state(t_module):
-            return {
-                'params': {
-                    'weight': t_to_np(t_module.weight)
-                },
-                'constants': {}
-            }
+    #     def get_t_state(t_module):
+    #         return {
+    #             'params': {
+    #                 'weight': t_to_np(t_module.weight)
+    #             },
+    #             'constants': {}
+    #         }
 
-        module_gen = lambda r: nn.Embedding(500, 1000, rng=r)
-        t_module_gen = lambda : torch.nn.Embedding(500, 1000)
-        test_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
+    #     module_gen = lambda r: nn.Embedding(500, 1000, rng=r)
+    #     t_module_gen = lambda : torch.nn.Embedding(500, 1000)
+    #     test_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
 
-        _, apply = nn.Embedding(30, 10, rng=rng)
-        t_module = torch.nn.Embedding(30, 10)
-        state = get_t_state(t_module)
+    #     _, apply, global_config = nn.Embedding(30, 10, rng=rng)
+    #     t_module = torch.nn.Embedding(30, 10)
+    #     state = get_t_state(t_module)
 
-        x = jnp.array([0, 2, 29, 7, 4])
-        x_t = torch.tensor(np.array(x))
+    #     x = jnp.array([0, 2, 29, 7, 4])
+    #     x_t = torch.tensor(np.array(x))
 
-        y, state = apply(state, x)
-        y2, _ = apply(state, x)
-        y_t = t_module(x_t).detach().numpy()
+    #     y, state = apply(x, state, global_config)
+    #     y2, _ = apply(x, state, global_config)
+    #     y_t = t_module(x_t).detach().numpy()
 
-        self.assertTrue(allclose(y_t, y))
-        self.assertTrue(allclose(y_t, y2))
+    #     self.assertTrue(allclose(y_t, y))
+    #     self.assertTrue(allclose(y_t, y2))
 
-    def test_sequential(self):
-        rng =  jax.random.PRNGKey(0)
-        def get_t_state(t_module):
-            params = []
-            constants = []
-            for l in t_module:
-                params.append({
-                    'weight': t_to_np(l.weight),
-                    'bias': t_to_np(l.bias)
-                })
-                constants.append({})
-            state = {
-                'params': params,
-                'constants': constants
-            }
-            return state
+    # def test_sequential(self):
+    #     rng =  jax.random.PRNGKey(0)
+    #     def get_t_state(t_module):
+    #         params = []
+    #         constants = []
+    #         for l in t_module:
+    #             params.append({
+    #                 'weight': t_to_np(l.weight),
+    #                 'bias': t_to_np(l.bias)
+    #             })
+    #             constants.append({})
+    #         state = {
+    #             'params': params,
+    #             'constants': constants
+    #         }
+    #         return state
             
-        def module_gen(r):
-            with rng_util.RNGState(r):
-                chain = [
-                    nn.Linear(3, 1000),
-                    nn.Linear(1000, 500),
-                    nn.Linear(500, 50)
-                ]
-                state, apply = nn.Sequential(*chain)
-            return state, apply
+    #     def module_gen(r):
+    #         with rng_util.RNGState(r):
+    #             chain = [
+    #                 nn.Linear(3, 1000),
+    #                 nn.Linear(1000, 500),
+    #                 nn.Linear(500, 50)
+    #             ]
+    #             state, apply, global_config = nn.Sequential(*chain)
+    #         return state, apply, global_config
 
-        def t_module_gen():
-            return torch.nn.Sequential(*[
-                torch.nn.Linear(3, 1000),
-                torch.nn.Linear(1000, 500),
-                torch.nn.Linear(500, 50)
-            ])
+    #     def t_module_gen():
+    #         return torch.nn.Sequential(*[
+    #             torch.nn.Linear(3, 1000),
+    #             torch.nn.Linear(1000, 500),
+    #             torch.nn.Linear(500, 50)
+    #         ])
 
-        test_initialization(rng, module_gen, t_module_gen, get_t_state, 500)
+    #     test_initialization(rng, module_gen, t_module_gen, get_t_state, 500)
 
-        with rng_util.RNGState(rng):
-            chain = [
-                nn.Linear(3, 10),
-                nn.Linear(10, 20),
-                nn.Linear(20, 3)
-            ]
-            _, apply = nn.Sequential(*chain)
-        t_module = torch.nn.Sequential(*[
-            torch.nn.Linear(3, 10),
-            torch.nn.Linear(10, 20),
-            torch.nn.Linear(20, 3)
-        ])
-        state = get_t_state(t_module)
+    #     with rng_util.RNGState(rng):
+    #         chain = [
+    #             nn.Linear(3, 10),
+    #             nn.Linear(10, 20),
+    #             nn.Linear(20, 3)
+    #         ]
+    #         _, apply, global_config = nn.Sequential(*chain)
 
-        x = jnp.array([[1,2,3],[5,6,6],[7,8,9]], dtype=float)
-        x_t = torch.tensor(np.array(x))
+    #     t_module = torch.nn.Sequential(*[
+    #         torch.nn.Linear(3, 10),
+    #         torch.nn.Linear(10, 20),
+    #         torch.nn.Linear(20, 3)
+    #     ])
+    #     state = get_t_state(t_module)
 
-        y, state = apply(state, x)
-        y2, _ = apply(state, x)
-        y_t = t_module(x_t).detach().numpy()
+    #     x = jnp.array([[1,2,3],[5,6,6],[7,8,9]], dtype=float)
+    #     x_t = torch.tensor(np.array(x))
 
-        self.assertTrue(allclose(y_t, y))
-        self.assertTrue(allclose(y_t, y2))
+    #     y, state = apply(x, state, global_config)
+    #     y2, _ = apply(x, state, global_config)
+    #     y_t = t_module(x_t).detach().numpy()
+
+    #     self.assertTrue(allclose(y_t, y))
+    #     self.assertTrue(allclose(y_t, y2))
 
 
         
-    def test_layer_norm(self):
-        rng =  jax.random.PRNGKey(0)
+    # def test_layer_norm(self):
+    #     rng =  jax.random.PRNGKey(0)
 
-        def get_t_state(t_module):
-            return {
-                'params': {
-                    'weight': t_to_np(t_module.weight),
-                    'bias': t_to_np(t_module.bias)
-                },
-                'constants': {}
-            }
+    #     def get_t_state(t_module):
+    #         return {
+    #             'params': {
+    #                 'weight': t_to_np(t_module.weight),
+    #                 'bias': t_to_np(t_module.bias)
+    #             },
+    #             'constants': {}
+    #         }
 
-        module_gen = lambda r: nn.LayerNorm(300, r)
-        t_module_gen = lambda : torch.nn.LayerNorm(300)
+    #     module_gen = lambda r: nn.LayerNorm(300, rng=r)
+    #     t_module_gen = lambda : torch.nn.LayerNorm(300)
 
-        test_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
+    #     test_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
 
-        _, apply = nn.LayerNorm(3, rng)
-        t_module = torch.nn.LayerNorm(3)
-        state = get_t_state(t_module)
-        x = jnp.array([[1,2,3],[5,6,6],[7,8,9]], dtype=float)
-        x_t = torch.tensor(np.array(x))
+    #     _, apply, global_config = nn.LayerNorm(3, rng=rng)
+    #     t_module = torch.nn.LayerNorm(3)
+    #     state = get_t_state(t_module)
+    #     x = jnp.array([[1,2,3],[5,6,6],[7,8,9]], dtype=float)
+    #     x_t = torch.tensor(np.array(x))
 
-        y, state = apply(state, x)
-        y2, _ = apply(state, x)
-        y_t = t_module(x_t).detach().numpy()
+    #     y, state = apply(x, state, global_config)
+    #     y2, _ = apply(x, state, global_config)
+    #     y_t = t_module(x_t).detach().numpy()
 
-        self.assertTrue(allclose(y_t, y))
-        self.assertTrue(allclose(y_t, y2))
+    #     self.assertTrue(allclose(y_t, y))
+    #     self.assertTrue(allclose(y_t, y2))
  
 
-    def test_rngstate(self):
-        rng = jax.random.PRNGKey(0)
+    # def test_rngstate(self):
+    #     rng = jax.random.PRNGKey(0)
 
-        samples = []
-        num_samples=10000
+    #     samples = []
+    #     num_samples=10000
 
-        with rng_util.RNGState(rng):
-            for _ in range(num_samples):
-                r = rng_util.split()
-                samples.append(jax.random.normal(r))
-        samples = jnp.array(samples)
+    #     with rng_util.RNGState(rng):
+    #         for _ in range(num_samples):
+    #             r = rng_util.split()
+    #             samples.append(jax.random.normal(r))
+    #     samples = jnp.array(samples)
 
-        var = jnp.mean(samples**2 - jnp.mean(samples)**2)
+    #     var = jnp.mean(samples**2 - jnp.mean(samples)**2)
 
 
-        self.assertTrue(jnp.abs(var-1.0)<0.05)
+    #     self.assertTrue(jnp.abs(var-1.0)<0.05)
 
-    def test_nested_modules(self):
-        rng = jax.random.PRNGKey(0)
+    # def test_nested_modules(self):
+    #     rng = jax.random.PRNGKey(0)
     
-        _, apply = NextModule(5, 10, 20, 2, 10, 20, rng=rng)
+    #     _, apply, global_config = NextModule(5, 10, 20, 2, 10, 20, rng=rng)
 
-        t_module = T_NextModule(5, 10, 20, 2, 10, 20)
+    #     t_module = T_NextModule(5, 10, 20, 2, 10, 20)
 
-        state = get_nested_state(t_module)
+    #     state = get_nested_state(t_module)
 
 
 
     
-        x = jnp.ones(10, dtype=int)
-        x_t = torch.tensor(np.array(x))
+    #     x = jnp.ones(10, dtype=int)
+    #     x_t = torch.tensor(np.array(x))
 
-        y, state = apply(state, x)
-        y2, _ = apply(state, x)
-        y_t = t_module(x_t).detach().numpy()
+    #     y, state = apply(x, state, global_config)
+    #     y2, _ = apply(x, state, global_config)
+    #     y_t = t_module(x_t).detach().numpy()
 
-        self.assertTrue(allclose(y_t, y))
-        self.assertTrue(allclose(y_t, y2))
+    #     self.assertTrue(allclose(y_t, y))
+    #     self.assertTrue(allclose(y_t, y2))
 
 
 

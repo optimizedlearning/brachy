@@ -21,6 +21,13 @@ from types import SimpleNamespace
 
 import functools
 
+def merge_configs(*configs):
+    ret = {}
+    for config in configs:
+        ret.update(config)
+
+    return ret
+
 # import torch
 
 # class return_torch_hack:
@@ -51,7 +58,8 @@ import functools
 STATE_ORGANIZER_RESERVED = [
     '_state',
     '_apply_fns',
-    'config'
+    'local_config',
+    '_global_config'
 ]
 
 
@@ -62,7 +70,8 @@ class StateOrganizer:
     def __init__(
         self,
         state=None,
-        config=None,
+        global_config=None,
+        local_config=None,
         apply_fns=None,
         ):
         if state is None:
@@ -73,19 +82,26 @@ class StateOrganizer:
         if apply_fns is None:
             apply_fns = {}
         
-        if config is None:
-            config = SimpleNamespace()
+        if local_config is None:
+            local_config = {}
+
+        if global_config is None:
+            global_config = {}
 
         self._state = state
         self._apply_fns = apply_fns
-        self.config = config
+        self.local_config = local_config # we'll let users access local_config easily
+        self._global_config = global_config # it's possible to screw something up by incorrectly accesssing this, so we make it harder.
 
-    def create_module(self, cls):
+    def update_global_config(self, update):
+        self._global_config.update(update)
+
+    def create_module(self, apply):
         pack = functools.partial(
             StateOrganizer,
-            config=self.config,
+            local_config=self.local_config,
             apply_fns=self._apply_fns)
-        return self._state, Partial(cls.apply, pack)
+        return self._state, Partial(apply, pack, local_config=dict(self.local_config)), self._global_config
 
     def get_state(self):
         return self._state
@@ -120,17 +136,24 @@ class StateOrganizer:
         if name in STATE_ORGANIZER_RESERVED:
             return super().__getattribute__(name)
 
+
         if name in self._apply_fns:
             apply_fns = self._apply_fns
             params = self._state['params']
             constants = self._state['constants']
+            global_config = self._global_config
+            local_config = self.local_config
+            state = self.get_state()
             def apply(*args, **kwargs):
                 x, next_state = apply_fns[name](
-                    {
+                    *args, 
+                    state={
                         'params': params[name],
                         'constants': constants[name]
                     },
-                    *args, **kwargs)
+                    global_config=global_config,
+                    local_config=local_config,
+                    **kwargs)
 
                 params[name] = next_state['params']
                 constants[name] = next_state['constants']
@@ -175,9 +198,11 @@ class StateOrganizer:
             return super().__setattr__(name, value)  
 
         # try to unpack:
-        if isinstance(value, tuple) and len(value) == 2:
-            state, apply = value
+        if isinstance(value, tuple) and len(value) == 3:
+            state, apply, global_config = value
             if not callable(apply):
+                # this is some weird tuple parameter assignment I guess.
+                # maybe we should just forbid such behavior, but anyway...
                 state = value
         else:
             state = value
@@ -191,347 +216,117 @@ class StateOrganizer:
 
         if apply is not None:
             self._apply_fns[name] = apply
+            self.update_global_config(global_config)
 
         return super().__setattr__(name, value)        
 
-# class StateOrganizer:
-
-#     def __init__(self):
-#         self._own_state = {
-#             'params': {},
-#             'constants': {},
-#         }
-#         self._t_own_state = {
-#             'params': {},
-#             'constants': {},
-#         }
-
-#         self._apply_fns = {}
-
-#         self._t_params = {}
-#         self._t_modules = {}
-
-#         self._sub_modules = {}
-
-#         self.config = SimpleNamespace()
-
-
-#     def __setattr__(self, name, value):
-#         if name == 'config' or name[0] == '_': # reserve names starting with _ to be assigned as normal.
-#             return super().__setattr__(name, value)
-#         # look, for now let's assume all attributes are also modules ok? thanks.
-
-#         assert name not in self._own_state['params'], f"cannot create submodule {name}: a pre-existing parameter already has this name!"
-#         assert name not in self._own_state['constants'], f"cannot create submodule {name}: a pre-existing constant already has this name!"
-
-#         if len(value) == 4:
-#             state, apply, t_params, t_module = value
-#         else:
-#             state, apply = value
-
-
-#         self._sub_modules[name] = state
-#         self._apply_fns[name] = apply
-
-#         if len(value) == 4:
-#             self._t_modules[name] = t_module
-#             self._t_params[name] = t_params
-
-
-#         return super().__setattr__(name, value)
-
-#     def get_state(self):
-#         params = {}
-#         constants = {}
-
-#         for name, value in self._sub_modules.items():
-#             params[name] = value['params']
-#             constants[name] = value['constants']
-
-#         params.update(self._own_state['params'])
-#         constants.update(self._own_state['constants'])
-
-#         return {
-#             'params': params,
-#             'constants': constants
-#         }
-
-#     def get_t_state(self):
-#         params = {}
-#         constants = {}
-#         for name, value in self._t_params.items():
-#             params[name] = value['params']
-#             constants[name] = value['constants']
-
-#         params.update(self._t_own_state['params'])
-#         constants.update(self._t_own_state['constants'])
-
-#         return {
-#             'params': params,
-#             'constants': constants
-#         }
-
-#     def get_state_packer(self):
-#         '''
-#         returns a function that, given an appropriately shaped pytree object
-#         will create a pytorch module-like object that binds  apply functions
-#         to state data.
-
-
-#         organizer.fc = Linear(10, 30)
-
-#         # now, organizer.Linear is a tuple: organizer.Linear[0]['params'] = {'weight': weight, 'bias': bias}
-
-#         f = organizer.get_state_packer()
-
-#         # state is a pytree containing parameters corresponding to the
-#         # parameters of oraganizer.fc: it has keys:
-#         # state['params']['fc']['weight'] and
-#         # state['params']['fc']['bias'] 
-#         m = f(state)
-
-#         # m is now a namespace such that  m.Linear is a *function* that
-#         # applies a linear layer.
-
-#         m.fc(input) # = output of linear layer with weight state['params']['fc']['weight'] and bias state['params']['fc']['bias'] 
-#         '''
-#         def state_packer(
-#             apply_fns,
-#             sub_module_names,
-#             own_params_names,
-#             own_constants_names,
-#             config,
-#             state
-#             ):
-
-#             sub_states = {
-#                 k: {
-#                     'params': state['params'][k],
-#                     'constants': state['constants'][k]
-
-#                 }
-#                 for k in sub_module_names
-#             }
-#             values ={
-#                     k: Partial(fn, sub_states[k])
-#                 for k, fn in apply_fns.items()
-#             }
-#             values.update(
-#                 {
-#                     k: state['params'][k] for k in own_params_names
-#                 }
-#             )
-#             values.update(
-#                 {
-#                     k: state['constants'][k] for k in own_constants_names
-#                 }
-#             )
-#             values.update({'config': config})
-
-#             packed_state = SimpleNamespace(**values)
-        
-#         return Partial(
-#             state_packer,
-#             self._apply_fns,
-#             self._sub_modules.keys(),
-#             self._own_state['params'].keys(),
-#             self._own_state['constants'].keys(),
-#             self.config,
-#         )
-
-#     def create_module(self, cls, t_module=None, return_torch=False):
-#         state = self.get_state()
-#         t_state = self.get_t_state()
-#         apply_fn = Partial(cls.apply, self.get_state_packer())
-
-#         if return_torch:
-#             return state, apply_fn, t_state, t_module
-#         else:
-#             return state, apply_fn
-#     # def get_all_t_params(self):
-#     #     ret = {}
-#     #     for name, value in self._t_modules.items():
-#     #         ret[name] = value
-#     #     ret.update(self._t_own_state['constants'])
-#     #     ret.update(self._t_own_state['params'])
-#     #     ret.update({'config': self.config})
-
-#     #     return ret
-
-#     def setup_t_module(self, t_module):
-#         for name, value in self._t_modules.items():
-#             t_module.__setattr__(name, value)
-#         for name, value in self._t_own_state['params'].items():
-#             t_module.register_parameter(name, torch.nn.Parameter(value))
-#         for name, value in self._t_own_state['constants'].items():
-#             t_module.register_buffer(name, value)
-
-#         t_module.config = self.config
-#         return t_module
-
-
-
-#     def register_buffer(self, name, value, t_value=None):
-#         assert name not in self._sub_modules, f"cannot register constant buffer {name}: a pre-existing submodule already has this name!"
-
-#         self._own_state['constants'][name] = value
-
-#         if t_value is not None:
-#             self._t_own_state['constants'][name] = t_value
-
-#     def register_parameter(self, name, value, t_value=None):
-#         assert name not in self._sub_modules, f"cannot register parameter {name}: a pre-existing submodule already has this name!"
-
-#         self._own_state['params'][name] = value
-
-#         if t_value is not None:
-#             self._t_own_state['params'][name] = t_value
-
-
-
-# class TModule(torch.nn.Module):
-
-#     def __init__(self, organizer):
-#         super().__init__()
-#         organizer.setup_t_module(self)
-
-
 class Identity:
-    def __new__(cls, rng=None):#, return_torch=None):
-        # if return_torch is None:
-        #     return_torch = RETURN_TORCH.value
-
-        # t_module = torch.nn.Identity()
-        # t_state = {
-        #     'params': {},
-        #     'constants': {},
-        # }
+    def __new__(cls, rng=None):
 
         state = {
             'params': {},
             'constants': {}
         }
 
+        global_config = {}
+        return state, cls.apply, global_config
 
-        # if return_torch:
-        #     return state, cls.apply, t_state, t_module
-        # else:
-        #     del t_module
-        #     del t_state
-        return state, cls.apply
-
-    def apply(state, x):
+    def apply(x, state, global_config):
+        del global_config
         return x, state
 
-class Linear:
-    
-    def __new__(cls, in_features, out_features, bias=True, dtype=None, rng=None):#, return_torch=None):
-        # if return_torch is None:
-        #     return_torch = RETURN_TORCH.value
+def Linear(in_features, out_features, bias=True, dtype=None, rng=None):
+    if rng is None:
+        rng = rng_util.split()
 
-        # t_lin = torch.nn.Linear(in_features, out_features, bias)
+    rng, subkey = jax.random.split(rng)
 
-        # t_params = {
-        #     'weight': t_lin.weight
-        # }
-        if rng is None:
-            rng = rng_util.split()
+    w = jax.random.uniform(
+        key=subkey,
+        shape=(out_features, in_features),
+        minval=-jnp.sqrt(1/in_features),
+        maxval=jnp.sqrt(1/in_features),
+        dtype=None
+    )
 
+    params = {
+        'weight': w
+    }
+
+    if bias:
         rng, subkey = jax.random.split(rng)
-
-        w = jax.random.uniform(
+        b = jax.random.uniform(
             key=subkey,
-            shape=(out_features, in_features),
+            shape=(out_features,),
             minval=-jnp.sqrt(1/in_features),
-            maxval=jnp.sqrt(1/in_features),
-            dtype=None
+            maxval=jnp.sqrt(1/in_features)
         )
+        params['bias'] = b
 
-        params = {
-            'weight': w
-        }
-
-        if bias:
-            rng, subkey = jax.random.split(rng)
-            b = jax.random.uniform(
-                key=subkey,
-                shape=(out_features,),
-                minval=-jnp.sqrt(1/in_features),
-                maxval=jnp.sqrt(1/in_features)
-            )
-            params['bias'] = b
-
-        state = {
-            'params': params,
-            'constants': {},
-        }
-        return state, cls.apply
+    state = {
+        'params': params,
+        'constants': {},
+    }
+    global_config = {}
+    return state, Linear_apply, global_config
 
 
-    def apply(state, input):
-        params = state['params']
+def Linear_apply(x, state, global_config={}, local_config={}):
+    del global_config
+    params = state['params']
 
-        weight = params['weight'].transpose()
+    weight = params['weight'].transpose()
 
 
-        r = jnp.matmul(input, weight)
+    r = jnp.matmul(x, weight)
 
-        if 'bias' in params:
-            bias = params['bias']
-            r = r + bias
+    if 'bias' in params:
+        bias = params['bias']
+        r = r + bias
 
-        return r,  state
+    return r,  state
 
 
 
 
-class Embedding:
-    
-    def __new__(cls, num_embeddings, embedding_dim, dtype=None, rng=None):#, return_torch=None):
-        # if return_torch is None:
-        #     return_torch = RETURN_TORCH.value
+def Embedding(num_embeddings, embedding_dim, dtype=None, rng=None):
+    if rng is None:
+        rng = rng_util.split()
 
-        # t_embed = torch.nn.Embedding(num_embeddings, embedding_dim)
-        if rng is None:
-            rng = rng_util.split()
+    rng, subkey = jax.random.split(rng)
+    weight = jax.random.normal(
+        key=subkey,
+        shape=(num_embeddings, embedding_dim),
+        dtype=dtype
+    )
 
-        rng, subkey = jax.random.split(rng)
-        weight = jax.random.normal(
-            key=subkey,
-            shape=(num_embeddings, embedding_dim),
-            dtype=dtype
-        )
+    params = {
+        'weight': weight
+    }
 
-        params = {
-            'weight': weight
-        }
+    state = {
+        'params': params,
+        'constants': {},
+    }
 
-        state = {
-            'params': params,
-            'constants': {},
-        }
-
-        return state, cls.apply
+    global_config = {}
+    return state, Embedding_apply, global_config
 
 
-    def apply(state, idx):
-        weight = state['params']['weight']
-        return weight[idx, :], state
+def Embedding_apply(idx, state, global_config={}, local_config={}):
+    del global_config
+    weight = state['params']['weight']
+    return weight[idx, :], state
 
 
-class Sequential:
+def Sequential(*submodules, rng=None):
     '''
     chains together a list of state/apply_fn pairs ala torch.nn.Sequential
     
     arguments:
-        states_and_applies: An iterable either of (state, apply_fn) tuples or 
-            of (state, apply_fn, t_state, t_module), where each `state` is a pytree
-            and each `apply_fn` is a function whose first argument is pytree of the 
-            same shape as the corresponding `state`. If present, t_state is a pytree
-            of pytorch tensors of the same shape (and likely same values) as `state`,
-            and t_module is a pytorch module that implements the same function as apply_fn.
-
-            If return_torch is True, then states_and_applies must contain t_state and t_module.
+        submodules: An iterable of (state, apply_fn, global_config) tuples
+            where each `state` is a pytree and each `apply_fn` is a function whose first
+            argument is pytree of the same shape as the corresponding `state`. 
 
         return_torch: if True, return a pytorch Sequential module in addition to the
             Hax sequential information.
@@ -540,307 +335,305 @@ class Sequential:
         
     '''
 
-    def __new__(cls, *states_and_applies, rng=None):#, return_torch=None):
-        # if return_torch is None:
-        #     return_torch = RETURN_TORCH.value
 
-        if len(states_and_applies) == 0:
-            raise ValueError(f"You must provide a non-empty list to Sequential!")
-        
-
-
-        states = [s_a[0] for s_a in states_and_applies]
-        applies = [s_a[1] for s_a in states_and_applies]
-
-        seq_state = group_state_list(states)
-        apply_fn = functools.partial(cls.apply, applies)
-
-        return seq_state, apply_fn
-
-
-    def apply(applies, state, x):
-        states = ungroup_state(state)
-
-        next_states = []
-
-        for s, f in zip(states, applies):
-            x, state_update = f(s, x)
-            next_states.append(state_update)
-
-        return x, group_state_list(next_states)
-
-
-class LayerNorm:
+    if len(submodules) == 0:
+        raise ValueError(f"You must provide a non-empty list to Sequential!")
     
-    def __new__(cls, normalized_shape, eps=1e-05, rng=None):#, return_torch=None):
-
-        organizer = StateOrganizer()
-
-        organizer.config.eps = 1e-05
-
-        organizer.weight = jnp.ones(normalized_shape)
-
-        organizer.bias = jnp.zeros(normalized_shape)
-
-        return organizer.create_module(cls)
 
 
+    states = [s_a[0] for s_a in submodules]
+    applies = [s_a[1] for s_a in submodules]
+    configs = [s_a[2] for s_a in submodules]
+
+    seq_state = group_state_list(states)
+    apply_fn = Partial(Sequential_apply, applies)
+
+    global_config = merge_configs(*configs)
+
+    return seq_state, apply_fn, global_config
 
 
-    def apply(pack_state, state, x):
-        module = pack_state(state)
+def Sequential_apply(applies, x, state, global_config={}, local_config={}):
+    states = ungroup_state(state)
 
-        e_x = jnp.average(x, axis=-1, keepdims=True)
-        v_x = jnp.average((x-e_x)**2, axis=-1, keepdims=True)
+    next_states = []
 
-        ln = (x - e_x)/jnp.sqrt(v_x + module.config.eps) * module.weight + module.bias
+    for s, f in zip(states, applies):
+        x, state_update = f(x, s, global_config)
+        next_states.append(state_update)
 
-        return ln, module.get_state()
+    return x, group_state_list(next_states)
 
 
-class Conv2d:
-    def __new__(
-        cls,
-        in_channels,
-        out_channels,
-        kernel_size,
-        stride=1,
-        padding=0,
-        dilation=1,
-        groups=1,
-        bias=True,
-        padding_mode='zeros',
-        dtype=None,
-        return_torch=False,
-        rng=None):
-        '''
-        See the torch.nn.Conv2d description for what the arguments are.
-        '''
-        # arguments = locals() # there's gotta be a better way...
-        # arguments.pop('cls')
-        # arguments.pop('rng')
+def LayerNorm(normalized_shape, eps=1e-05, rng=None):
 
-        assert padding_mode=='zeros', "currently only the 'zeros' padding_mode is supported, sorry!"
-        if rng is None:
-            rng = rng_util.split()
+    organizer = StateOrganizer(local_config={'eps': eps})
 
+    organizer.weight = jnp.ones(normalized_shape)
+
+    organizer.bias = jnp.zeros(normalized_shape)
+    return organizer.create_module(Layernorm_apply)
+
+
+
+
+def Layernorm_apply(pack_state, x, state, global_config={}, local_config={}):
+    module = pack_state(state, global_config)
+
+    e_x = jnp.average(x, axis=-1, keepdims=True)
+    v_x = jnp.average((x-e_x)**2, axis=-1, keepdims=True)
+    
+
+    ln = (x - e_x)/jnp.sqrt(v_x + module.local_config['eps']) * module.weight + module.bias
+
+    return ln, module.get_state()
+
+
+def Conv2d(
+    in_channels,
+    out_channels,
+    kernel_size,
+    stride=1,
+    padding=0,
+    dilation=1,
+    groups=1,
+    bias=True,
+    padding_mode='zeros',
+    dtype=None,
+    return_torch=False,
+    rng=None):
+    '''
+    See the torch.nn.Conv2d description for what the arguments are.
+    '''
+    assert padding_mode=='zeros', "currently only the 'zeros' padding_mode is supported, sorry!"
+    if rng is None:
+        rng = rng_util.split()
+
+    rng, subkey = jax.random.split(rng)
+
+    if isinstance(kernel_size, int):
+        kernel_size = (kernel_size, kernel_size)
+    
+    state = {
+        'params': {},
+        'constants': {}
+    }
+
+    k = groups / (in_channels * kernel_size[0] * kernel_size[1])
+
+    state['params']['weight'] = jax.random.uniform(
+        key=subkey,
+        shape=(out_channels, in_channels//groups, kernel_size[0], kernel_size[1]),
+        minval=-jnp.sqrt(k),
+        maxval=jnp.sqrt(k)
+    )
+
+    if isinstance(stride, int):
+        stride = (stride, stride)
+
+    if isinstance(dilation, int):
+        dilation = (dilation, dilation)
+
+    if isinstance(padding, int):
+        padding = ((padding, padding), (padding, padding))
+
+    local_config = {
+        'padding': padding,
+        'stride': stride,
+        'dilation': dilation,
+        'feature_group_count': groups,
+        'padding_mode': padding_mode
+    }
+
+    if bias:
         rng, subkey = jax.random.split(rng)
-
-        if isinstance(kernel_size, int):
-            kernel_size = (kernel_size, kernel_size)
-        
-        state = {
-            'params': {},
-            'constants': {}
-        }
-
-        k = groups / (in_channels * kernel_size[0] * kernel_size[1])
-
-        state['params']['weight'] = jax.random.uniform(
+        state['params']['bias'] = jax.random.uniform(
             key=subkey,
-            shape=(out_channels, in_channels//groups, kernel_size[0], kernel_size[1]),
+            shape=(out_channels,),
             minval=-jnp.sqrt(k),
-            maxval=jnp.sqrt(k)
+            maxval=jnp.sqrt(k),
         )
 
-        if isinstance(stride, int):
-            stride = (stride, stride)
-
-        if isinstance(dilation, int):
-            dilation = (dilation, dilation)
-
-        if isinstance(padding, int):
-            padding = ((padding, padding), (padding, padding))
-
-        conv_config = {
-            'padding': padding,
-            'stride': stride,
-            'dilation': dilation,
-            'feature_group_count': groups,
-            'padding_mode': padding_mode
-        }
-
-        if bias:
-            rng, subkey = jax.random.split(rng)
-            state['params']['bias'] = jax.random.uniform(
-                key=subkey,
-                shape=(out_channels,),
-                minval=-jnp.sqrt(k),
-                maxval=jnp.sqrt(k),
-            )
-
-        return state, Partial(cls.apply, conv_config=conv_config)
+    global_config = {}
+    return state, Partial(Conv2d_apply, local_config=local_config), global_config
 
     
-    def apply(state, x, conv_config={
-            'padding': 0,
-            'stride': 1,
-            'dilation': 1,
-            'feature_group_count': 1,
-            'padding_mode': 'same'
-        }):
-        '''
-        perform a convolution.
+def Conv2d_apply(x, state, global_config={}, local_config={
+        'padding': 0,
+        'stride': 1,
+        'dilation': 1,
+        'feature_group_count': 1,
+        'padding_mode': 'same'
+    }):
+    '''
+    perform a convolution.
 
-        arguments:
-            state: a state pytree. 
+    arguments:
+        state: a state pytree. 
 
-            x: a shape [N, Cin, Hin, Win] tensor, where N is usually batch dimension,
-                C is channels and ... represents an arbitrary number of
-                shape dimension (usually 2, sometimes 1, occasionally 3, but could
-                be anything)
+        x: a shape [N, Cin, Hin, Win] tensor, where N is usually batch dimension,
+            C is channels and ... represents an arbitrary number of
+            shape dimension (usually 2, sometimes 1, occasionally 3, but could
+            be anything)
 
-                NOTE: pytorch allows x to have shape [Cin, Hin, Win]. Currently this
-                will thrown an error here. To be fixed late (maybe).
+            NOTE: pytorch allows x to have shape [Cin, Hin, Win]. Currently this
+            will thrown an error here. To be fixed late (maybe).
+    
+    returns:
+        conv: a shape [N, Cout, Hout, Wout] tensor where Cout is the 
+            number of output channels.
+            The size of the shape dimensions Hout, Wout 
+            will depend on potential padding of the convolution operation.
+    '''
+    
+    weight = state['params']['weight']
+
+    constants = SimpleNamespace(**local_config)
+
+    
+
+
+    conv = jax.lax.conv_general_dilated(
+        x,
+        weight,
+        window_strides=constants.stride,
+        padding=constants.padding,
+        lhs_dilation=None,
+        rhs_dilation=constants.dilation,
+        dimension_numbers=('NCHW', 'OIHW', 'NCHW'),
+        feature_group_count=constants.feature_group_count,
+        batch_group_count=1,
+        precision=None,
+        preferred_element_type=None)
+
+
+
+    if 'bias' in state['params']:
+        bias = state['params']['bias']
         
-        returns:
-            conv: a shape [N, Cout, Hout, Wout] tensor where Cout is the 
-                number of output channels.
-                The size of the shape dimensions Hout, Wout 
-                will depend on potential padding of the convolution operation.
-        '''
-        
-        weight = state['params']['weight']
+        conv = conv + einops.rearrange(bias, '(N C H W) -> N C H W', N=1, H=1, W=1)
 
-        constants = SimpleNamespace(**conv_config)
-
-        
+    return conv, state
 
 
-        conv = jax.lax.conv_general_dilated(
-            x,
-            weight,
-            window_strides=constants.stride,
-            padding=constants.padding,
-            lhs_dilation=None,
-            rhs_dilation=constants.dilation,
-            dimension_numbers=('NCHW', 'OIHW', 'NCHW'),
-            feature_group_count=constants.feature_group_count,
-            batch_group_count=1,
-            precision=None,
-            preferred_element_type=None)
+# ok, I wanted this to be the same as torch, but my god their implemention of
+# multihead attention is way over-complicated. So, we opt for readability here
+# instead.
+def MultiheadAttention(
+    embed_dim,
+    num_heads,
+    bias=True,
+    k_dim=None,
+    v_dim=None,
+    rng=None):
+    '''
+    cls: class object
+    return_torch:  whether to return a pytorch object.
+    '''
+    if k_dim is None:
+        k_dim = embed_dim
+    if v_dim is None:
+        v_dim = embed_dim
+    if rng is None:
+        rng = rng_utils.split()
+
+    
+
+    organizer = StateOrganizer(local_config={'num_heads': num_heads})
+
+    # the pytorch implementation is full of random special cases.
+    # Let's try to not do that here. This requires one special case
+    # parameter extraction here, and then none later one.
+
+    with rng_util.RNGState(rng):
+
+        organizer.q_proj = Linear(embed_dim, embed_dim, bias=bias)
+        organizer.k_proj = Linear(k_dim, embed_dim, bias=bias)
+        organizer.v_proj = Linear(v_dim, embed_dim, bias=bias)
+
+    
+    return organizer.create_module(MultiheadAttention_apply)
+
+def MultiheadAttention_apply(pack_state, state, q, k, v, mask, global_config={}, local_config={
+        'num_heads': 1
+    }):
+    # q is [B, T, C]
+    # k is [B, T, K]
+    # v is [B, T, V]
+    # mask is is an array of booleans of shape
+    # [b, n, L, L]
+    # where b is either 1 or B
+    # n is either 1 or num_heads
+    # L is at least T.
+
+    *_, T, C = q.shape
+
+    num_heads = config['num_heads']
+
+    module = pack_state(state, global_config)
+
+    q = module.q_proj(x)
+    k = module.k_proj(x)
+    v = module.v_proj(x)
+
+    # q, k, v all are all [B, T, C]
+
+    q = einops.rearrange(q, 'b t (n h) -> b, n, t, h', n=num_heads) # [B T C] -> [B N T H]
+    k = einops.rearrange(k, 'b t (n h) -> b, n, t, h', n=num_heads)
+    v = einops.rearrange(m, 'b t (n h) -> b, n, t, h', n=num_heads)
+
+    logits = einops.einsum(q, k, 'b n t1 c, b n t2 c -> b n t1 t2') # [B, N, T, H] x [B, N, T, H] -> [B, N, T, T]
+
+    broadcast_mask = jnp.broadcast_to(mask[:, :, :T, :T], logits.shape)
+    masked_logits = jnp.where(broadcast_mask, logits, -jnp.inf)
+
+    att = jax.nn.softmax(masked_logits, axis=-1) # [B, N, T, T] -> [B, N, T, T]
+
+    values = einops.einsum(att, v, 'b n t1 t2, b n t2 h -> b n t1 h') # [B, N, T, T] x [B, N, T, H] -> [B, N, T, H]
+    values = einops.rearrange(values, 'b n t h -> b t (n h)') # [B N T H] -> [B T C]
+
+    return values, state
+
+def CausalSelfAttention(
+    embed_dim,
+    num_heads,
+    bias=True,
+    rng=None):
+    '''
+    cls: class object
+    return_torch:  whether to return a pytorch object.
+    '''
+    if rng is None:
+        rng = rng_utils.split()
 
 
+    organizer.proj = Linear(embed_dim, embed_dim, bias=bias, rng=rng)
 
-        if 'bias' in state['params']:
-            bias = state['params']['bias']
-            
-            conv = conv + einops.rearrange(bias, '(N C H W) -> N C H W', N=1, H=1, W=1)
+    organizer = StateOrganizer()
 
-        return conv, state
+    organizer.MHA = MultiheadAttention(
+        embed_dim,
+        num_heads,
+        bias,
+        rng=rng
+        )
 
+    return organizer.create_module(CausalSelfAttention)
 
-# class MultiheadAttention:
+def CausalSelfAttention_apply(pack_state, x, state, global_config={}, local_config={}):
 
-#     def __new__(
-#         cls,
-#         embed_dim,
-#         num_heads,
-#         bias=True,
-#         add_bias_kv=False,
-#         add_zero_attn=False,
-#         kdim=None,
-#         vdim=None,
-#         batch_first=False,
-#         device=None,
-#         dtype=None,
-#         return_torch=None):
-#         '''
-#         cls: class object
-#         return_torch:  whether to return a pytorch object.
-#         '''
+    module = pack_state(state, global_config)
 
-#         arguments = locals() # there's gotta be a better way...
-#         arguments.pop('cls')
-#         arguments.pop('return_torch')
-#         arguments.pop('rng')
+    *_, T, C = x.shape
 
-#         if return_torch is None:
-#             return_torch = RETURN_TORCH.value
+    # should we actually be  storing this as a constant? then we'd need to know the
+    # T ahead of time (although I guess we could fall back to this case if needed... 
+    # the conditional will be ok even with jax.jit since it depends on the shape)
+    causal_mask = jnp.tril(jnp.ones(1, 1, T, T)) 
 
-#         organizer = StateOrganizer()
+    return module.MHA(x, x, x, causal_mask)
 
 
-
-#         #might as well log the args...
-#         organizer.config = arguments
-#         t_mha = torch.nn.MultiheadAttention(**arguments)
-
-
-#         # the pytorch implementation is full of random special cases.
-#         # Let's try to not do that here. This requires one special case
-#         # parameter extraction here, and then none later one.
-#         if not t_mha._qkv_same_embed_dim
-#             organizer.register_parameter(
-#                 'q_proj_weight',
-#                 t_to_jnp(t_mha.q_proj_weight)
-#             )
-#             organizer.register_parameter(
-#                 'k_proj_weight',
-#                 t_to_jnp(t_mha.k_proj_weight)
-#             )
-#             organizer.register_parameter(
-#                 'v_proj_weight',
-#                 t_to_jnp(t_mha.v_proj_weight)
-#             )
-#         else:
-#             organizer.register_parameter(
-#                 'q_proj_weight',
-#                 t_to_jnp(t_mha.in_proj_weight[:embed_dim, :])
-#             )
-#             organizer.register_parameter(
-#                 'k_proj_weight',
-#                 t_to_jnp(t_mha.in_proj_weight[embed_dim:2*embed_dim, :])
-#             )
-#             organizer.register_parameter(
-#                 'v_proj_weight',
-#                 t_to_jnp(t_mha.in_proj_weight[2*embed_dim:, :])
-#             )
-
-#         if bias:
-#             organizer.register_parameter(
-#                 'in_proj_bias',
-#                 t_to_jnp(t_mha.in_proj_bias)
-#             )
-        
-#         if add_bias_kv:
-#             organizer.register_parameter(
-#                 'bias_k',
-#                 t_to_jnp(t_mha.bias_k)
-#             )
-#             organizer.register_parameter(
-#                 'bias_v',
-#                 t_to_jnp(t_mha.bias_v)
-#             )
-
-#         constants = {
-#             'dropout': dropout,
-#             'num_heads': num_heads,
-#             'add_zero_attn': add_zero_attn,
-#             'batch_first': batch_first,
-#         }
-#         # if not self._qkv_same_embed_dim:
-#         #     self.q_proj_weight = Parameter(torch.empty((embed_dim, embed_dim), **factory_kwargs))
-#         #     self.k_proj_weight = Parameter(torch.empty((embed_dim, self.kdim), **factory_kwargs))
-#         #     self.v_proj_weight = Parameter(torch.empty((embed_dim, self.vdim), **factory_kwargs))
-#         #     self.register_parameter('in_proj_weight', None)
-#         # else:
-#         #     self.in_proj_weight = Parameter(torch.empty((3 * embed_dim, embed_dim), **factory_kwargs))
-#         #     self.register_parameter('q_proj_weight', None)
-#         #     self.register_parameter('k_proj_weight', None)
-#         #     self.register_parameter('v_proj_weight', None)
-
-#         # if bias:
-#         #     self.in_proj_bias = Parameter(torch.empty(3 * embed_dim, **factory_kwargs))
-#         # else:
-#         #     self.register_parameter('in_proj_bias', None)
-#         # self.out_proj = NonDynamicallyQuantizableLinear(embed_dim, embed_dim, bias=bias, **factory_kwargs)
-
-#         # if add_bias_kv:
-#         #     self.bias_k = Parameter(torch.empty((1, 1, embed_dim), **factory_kwargs))
-#         #     self.bias_v = Parameter(torch.empty((1, 1, embed_dim), **factory_kwargs))
-#         # else:
-#         #     self.bias_k = self.bias_v = None
 
 
 def softmax_cross_entropy(logits, labels):
@@ -862,16 +655,25 @@ def softmax_cross_entropy(logits, labels):
     # This is like jnp.take_along_axis(jax.nn.log_softmax(...), ...) except that
     # we avoid subtracting the normalizer from all values, just from the values
     # for the correct labels.
-    logits_max = jnp.max(logits, axis=-1, keepdims=True)
-    logits -= jax.lax.stop_gradient(logits_max)
+
 
     no_ignore = jax.lax.stop_gradient(labels!=-100)
+    logits_max = jnp.max(logits, axis=-1, keepdims=True, where=no_ignore, initial=0.0)
+    logits = logits - jax.lax.stop_gradient(logits_max)
+
+
+    log_normalizer = jnp.log(jnp.sum(jnp.exp(logits), axis=-1, where=no_ignore))
 
     ignore_labels = jnp.where(no_ignore, labels, jnp.zeros_like(labels))
-
-    total = jax.lax.stop_gradient(jnp.sum(no_ignore))
-
     label_logits = jnp.take_along_axis(logits, ignore_labels[..., None], axis=-1)[..., 0]
 
-    log_normalizers = jnp.log(jnp.sum(jnp.exp(logits), axis=-1))
-    return jnp.sum(jnp.where(no_ignore, log_normalizers - label_logits, jnp.zeros_like(labels)))/total
+    return jnp.mean(log_normalizers - label_logits, axis=-1, where=no_ignore)
+
+    # # ignore_labels = jnp.where(no_ignore, labels, jnp.zeros_like(labels))
+
+    # # total = jax.lax.stop_gradient(jnp.sum(no_ignore))
+
+    # label_logits = jnp.take_along_axis(logits, ignore_labels[..., None], axis=-1)[..., 0]
+
+    # # log_normalizers = jnp.log(jnp.sum(jnp.exp(logits), axis=-1))
+    # # return jnp.sum(jnp.where(no_ignore, log_normalizers - label_logits, jnp.zeros_like(labels)))/total

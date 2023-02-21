@@ -75,11 +75,6 @@ def tree_merge_none(*trees):
     
     return tree_map(find_value, trees)
 
-def tree_split_by_keys(tree, keys=['params', 'constants']):
-    return [tree_extract_values(tree, key) for key in keys]
-
-
-
 
 def tree_mask(to_mask, aux, mask_fn):
     '''
