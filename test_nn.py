@@ -5,6 +5,8 @@ import nn
 import rng_util
 from jax.tree_util import tree_map, tree_reduce
 
+import einops
+
 import pprint
 import torch
 
@@ -595,33 +597,100 @@ class TestNN(unittest.TestCase):
         assert jnp.allclose(y_eval, 5*x)
 
 
-    # def test_multiheadattention(self):
+    def test_multiheadattention(self):
 
-    #     rng = jax.random.PRNGKey(0)
+        # this test is mostly just re-implementing it in a different way...
+        # I'm too lazy to write the pytorch equivalency check right now...
 
-    #     embed_dim = 10
-    #     num_heads = 2
-    #     bias = True
-    #     k_dim = 5
-    #     v_dim = 4
+        rng = jax.random.PRNGKey(0)
 
-    #     apply, state, global_config = nn.MultiheadAttention(
-    #         embed_dim=embed_dim,
-    #         num_heads=num_heads,
-    #         bias=bias,
-    #         k_dim=k_dim,
-    #         v_dim=v_dim,
-    #         rng=rng
-    #     )
+        embed_dim = 10
+        num_heads = 2
+        bias = True
+        k_dim = 5
+        v_dim = 4
 
-    #     B = 3
-    #     T = 6
+        apply, state, global_config = nn.MultiheadAttention(
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            bias=bias,
+            k_dim=k_dim,
+            v_dim=v_dim,
+            rng=rng
+        )
 
-    #     q = jnp.reshape(jnp.arange(B*T*embed_dim), (B, T, embed_dim))
-    #     k = jnp.reshape(jnp.arange(B*T*k_dim), (B, T, k_dim))
-    #     v = jnp.reshape(jnp.arange(B*T*v_dim), (B, T, v_dim))
+        B = 3
+        T = 6
+        head_size = embed_dim // num_heads
+        q = jnp.reshape(jnp.arange(B*T*embed_dim), (B, T, embed_dim))
+        k = jnp.reshape(jnp.arange(B*T*k_dim), (B, T, k_dim))
+        v = jnp.reshape(jnp.arange(B*T*v_dim), (B, T, v_dim))
 
-    #     y = apply(state, global_config, q, k, v,)
+        y, _ = apply(state, global_config, q, k, v)
+
+        
+        # manual implementation:
+        params = state['params']
+
+        q_p = q @ params['q_proj']['weight'].T + params['q_proj']['bias']
+        k_p = k @ params['k_proj']['weight'].T + params['k_proj']['bias']
+        v_p = v @ params['v_proj']['weight'].T + params['v_proj']['bias']
+
+        # extract heads manually
+        q_h = [q_p[:, :, :head_size], q_p[:, :, -head_size:]]
+        k_h = [k_p[:, :, :head_size], k_p[:, :, -head_size:]]
+        v_h = [v_p[:, :, :head_size], v_p[:, :, -head_size:]]
+
+        batch_transpose_mm = lambda a, b: einops.einsum(a, b, 'b i j, b k j -> b i k')
+        batch_mm = lambda a, b: einops.einsum(a, b, 'b i j, b j k -> b i k')
+
+
+
+        logits = [batch_transpose_mm(q_h[0], k_h[0])/jnp.sqrt(head_size), batch_transpose_mm(q_h[1], k_h[1])/jnp.sqrt(head_size)]
+
+        softmax = [jax.nn.softmax(logits[0], axis=-1), jax.nn.softmax(logits[1], axis=-1)]
+
+        values = [batch_mm(softmax[0], v_h[0]), batch_mm(softmax[1], v_h[1])]
+
+        y_check = einops.rearrange(values, 'n b t h -> b t (n h)', n=2)
+
+
+
+        assert jnp.allclose(y, y_check)
+
+
+    def test_causal_attention(self):
+
+        rng = jax.random.PRNGKey(0)
+
+        embed_dim = 10
+        num_heads = 2
+        bias = True
+
+        apply, state, global_config = nn.CausalSelfAttention(
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            bias=bias,
+            rng=rng
+        )
+
+        B = 3
+        T = 6
+        head_size = embed_dim // num_heads
+        x_np = np.reshape(np.arange(B*T*embed_dim), (B, T, embed_dim))
+        x = jnp.array(x_np)
+        
+        x_np[:,4:,:] = 0
+        x_zeroed = jnp.array(x_np)
+
+
+        y, state = apply(state, global_config, x)
+        y_zeroed, state = apply(state, global_config, x_zeroed)    
+
+        assert jnp.allclose(y[:,:3,:], y_zeroed[:, :3,:])   
+
+        assert not jnp.allclose(y[1,4,2], y_zeroed[1, 4,2])    
+
 
 
 if __name__ == 'main':

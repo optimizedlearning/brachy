@@ -1,6 +1,7 @@
 import jax
 import numpy as np
 from jax import numpy as jnp
+from jax import lax
 from jax.tree_util import tree_map, tree_flatten, tree_unflatten
 
 import rng_util
@@ -15,6 +16,9 @@ import gc
 from state_util import ungroup_state, group_state_list
 
 from types import SimpleNamespace
+
+from jax._src.typing import Array, ArrayLike, DType, DTypeLike
+from typing import overload, Any, Callable, Literal, Optional, Sequence, Tuple, Union
 
 import functools
 
@@ -527,6 +531,7 @@ def MultiheadAttention(
         k_dim = embed_dim
     if v_dim is None:
         v_dim = embed_dim
+
     if rng is None:
         rng = rng_utils.split()
 
@@ -557,31 +562,41 @@ def MultiheadAttention_apply(pack_state, state, global_config, q, k, v, mask=Non
     # n is either 1 or num_heads
     # L is at least T.
 
-    *_, T, C = q.shape
+
 
     module = pack_state(state, global_config)
 
 
     num_heads = module.local_config['num_heads']
 
-    q = module.q_proj(x)
-    k = module.k_proj(x)
-    v = module.v_proj(x)
+    *_, T, C = q.shape
+    H = C / num_heads 
+
+    q = module.q_proj(q)
+    k = module.k_proj(k)
+    v = module.v_proj(v)
 
     # q, k, v all are all [B, T, C]
 
-    q = einops.rearrange(q, 'b t (n h) -> b, n, t, h', n=num_heads) # [B T C] -> [B N T H]
-    k = einops.rearrange(k, 'b t (n h) -> b, n, t, h', n=num_heads)
-    v = einops.rearrange(m, 'b t (n h) -> b, n, t, h', n=num_heads)
+    q = einops.rearrange(q, 'b t (n h) -> b n t h', n=num_heads) # [B T C] -> [B N T H]
+    k = einops.rearrange(k, 'b t (n h) -> b n t h', n=num_heads)
+    v = einops.rearrange(v, 'b t (n h) -> b n t h', n=num_heads)
 
-    logits = einops.einsum(q, k, 'b n t1 c, b n t2 c -> b n t1 t2') # [B, N, T, H] x [B, N, T, H] -> [B, N, T, T]
+    logits = einops.einsum(q, k, 'b n t1 h, b n t2 h -> b n t1 t2') # [B, N, T, H] x [B, N, T, H] -> [B, N, T, T]
+    logits = logits / jnp.sqrt(H)
+
 
 
     if mask is not  None:
         broadcast_mask = jnp.broadcast_to(mask[:, :, :T, :T], logits.shape)
-        masked_logits = jnp.where(broadcast_mask, logits, -jnp.inf)
+        masked_logits = jnp.where(broadcast_mask, logits, 0.0)
 
-        att = jax.nn.softmax(masked_logits, axis=-1) # [B, N, T, T] -> [B, N, T, T]
+        # x_max = jnp.max(logits, axis=-1, where=broadcast_mask , initial=-jnp.inf, keepdims=True)
+        # unnormalized = jnp.exp(logits - jax.lax.stop_gradient(x_max))
+        # unnormalized = jnp.where(broadcast_mask, unnormalized, 0.0)
+        # att = unnormalized / jnp.sum(unnormalized, axis=-1, where=broadcast_mask, keepdims=True)
+
+        att = softmax(logits, axis=-1, where=broadcast_mask) # [B, N, T, T] -> [B, N, T, T]
     else:
         att = jax.nn.softmax(logits, axis=-1)
 
@@ -603,8 +618,6 @@ def CausalSelfAttention(
         rng = rng_utils.split()
 
 
-    organizer.proj = Linear(embed_dim, embed_dim, bias=bias, rng=rng)
-
     organizer = StateOrganizer()
 
     organizer.MHA = MultiheadAttention(
@@ -614,7 +627,7 @@ def CausalSelfAttention(
         rng=rng
         )
 
-    return organizer.create_module(CausalSelfAttention)
+    return organizer.create_module(CausalSelfAttention_apply)
 
 def CausalSelfAttention_apply(pack_state, state, global_config, x):
 
@@ -622,15 +635,40 @@ def CausalSelfAttention_apply(pack_state, state, global_config, x):
 
     *_, T, C = x.shape
 
-    # should we actually be  storing this as a constant? then we'd need to know the
+    # should we be storing this as a constant instead? then we'd need to know the
     # T ahead of time (although I guess we could fall back to this case if needed... 
-    # the conditional will be ok even with jax.jit since it depends on the shape)
-    causal_mask = jnp.tril(jnp.ones((1, 1, T, T))) 
+    # A conditional will be ok even with jax.jit since it depends on the shape)
+    causal_mask = jnp.tri(T, k=0).reshape((1, 1, T, T))
 
-    return module.MHA(x, x, x, causal_mask)
+    return module.MHA(x, x, x, causal_mask), module.get_state()
 
 
 
+# the jax.nn.softmax function has some instabilities related to the where argument.
+# This one doesn't
+def softmax(x: Array,
+            axis: Optional[Union[int, Tuple[int, ...]]] = -1,
+            where: Optional[Array] = None) -> Array:
+  r"""Softmax function.
+
+  Computes the function which rescales elements to the range :math:`[0, 1]`
+  such that the elements along :code:`axis` sum to :math:`1`.
+
+  .. math ::
+    \mathrm{softmax}(x) = \frac{\exp(x_i)}{\sum_j \exp(x_j)}
+
+  Args:
+    x : input array
+    axis: the axis or axes along which the softmax should be computed. The
+      softmax output summed across these dimensions should sum to :math:`1`.
+      Either an integer or a tuple of integers.
+    where: Elements to include in the :code:`softmax`.
+  """
+  x_max = jnp.max(x, axis, where=where, initial=-jnp.inf, keepdims=True)
+  unnormalized = jnp.exp(x - lax.stop_gradient(x_max))
+  if where is not None:
+    unnormalized = jnp.where(where, unnormalized, 0.0)
+  return unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
 
 def softmax_cross_entropy(logits, labels):
     """Computes softmax cross entropy between sets of logits and integer labels.
