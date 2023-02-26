@@ -359,7 +359,7 @@ class TestStructureUtils(unittest.TestCase):
 
         tree['submodules'][3] = tree_2
 
-        params, module = su.bind_module(tree)
+        params, module = su.bind_module(tree, g_config)
         module = jax.jit(module)
 
         reconstructed_tree = su.unbind_module(params, module)
@@ -368,9 +368,9 @@ class TestStructureUtils(unittest.TestCase):
 
         x = jnp.ones(5)
 
-        next_params, y_first = module(params, g_config, x)
+        next_params, y_first = module(params, x)
 
-        next_params, y_second = module(next_params, g_config, x)
+        next_params, y_second = module(next_params, x)
 
         assert jnp.allclose(y_first, jnp.array([-2, 11, 32, 65, 218]))
 

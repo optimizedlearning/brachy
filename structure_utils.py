@@ -39,23 +39,38 @@ REQUIRED_KEYS = NON_CHILD_KEYS + [CHILD_KEY]
 def apply_tree(tree: StructureTree, global_config: dict, *args, **kwargs) -> [StructureTree, PyTree]:
     return tree['apply'](tree, global_config, *args, **kwargs)
 
-def apply(params: PyTree, constants: PyTree, aux: dict, apply: dict, global_config: dict, *args, **kwargs) -> [StructureTree, PyTree]:
-    tree = merge_trees(params, constants, aux, apply)
-    return apply_tree(tree, global_config, *args, **kwargs)
+# def apply(params: PyTree, constants: PyTree, aux: dict, apply: dict, global_config: dict, *args, **kwargs) -> [StructureTree, PyTree]:
+#     tree = merge_trees(params, constants, aux, apply)
+#     return apply_tree(tree, global_config, *args, **kwargs)
 
-def bind_module(tree: StructureTree):
-    init_params, aux_and_apply = split_tree(tree, [RETURNED_KEYS,NON_RETURNED_KEYS])
-
-
-    def bound(params: PyTree, global_config: dict, *args, **kwargs) -> [PyTree, PyTree, PyTree]:
+def bind_global_config(aux_and_apply, global_config: dict):
+    def bound(params: PyTree, *args, **kwargs):
         merged = merge_trees(params, aux_and_apply)
         next_tree, output = apply_tree(merged, global_config, *args, **kwargs)
         next_params = filter_keys(next_tree)
         return next_params, output
-
     bound.aux_and_apply = aux_and_apply
+    bound.bind_global_config = Partial(bind_global_config, aux_and_apply)
+    return bound
 
-    return init_params, bound
+def bind_module(tree: StructureTree, global_config: dict):
+    init_params, aux_and_apply = split_tree(tree, [RETURNED_KEYS,NON_RETURNED_KEYS])
+
+
+    return init_params, bind_global_config(aux_and_apply, global_config)
+    # def bound(params: PyTree, *args, **kwargs) -> [PyTree, PyTree, PyTree]:
+    #     merged = merge_trees(params, aux_and_apply)
+    #     next_tree, output = apply_tree(merged, global_config, *args, **kwargs)
+    #     next_params = filter_keys(next_tree)
+    #     return next_params, output
+
+
+
+    # bound.aux_and_apply = aux_and_apply
+    # bound.rebind_global_config = rebind_global_config
+
+    # return init_params, bound
+
 
 def unbind_module(tree, bound):
     return merge_trees(tree, bound.aux_and_apply)

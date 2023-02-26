@@ -648,7 +648,7 @@ class TestNN(unittest.TestCase):
         rng = jax.random.PRNGKey(0)
     
         tree, global_config = NextModule(5, 10, 20, 2, 10, 20, rng=rng)
-        init_state, apply = su.bind_module(tree)
+        init_state, apply = su.bind_module(tree, global_config)
 
         t_module = T_NextModule(5, 10, 20, 2, 10, 20)
 
@@ -659,8 +659,8 @@ class TestNN(unittest.TestCase):
         x = jnp.ones(10, dtype=int)
         x_t = torch.tensor(np.array(x))
 
-        state, y = apply(state, global_config, x)
-        _, y2 = apply(state, global_config, x)
+        state, y = apply(state, x)
+        _, y2 = apply(state, x)
         y_t = t_module(x_t).detach().numpy()
 
         self.assertTrue(allclose(y_t, y))
@@ -732,14 +732,16 @@ class TestNN(unittest.TestCase):
         
     
         tree, global_config = simplemodule(jax.random.PRNGKey(0))
-        state, apply = su.bind_module(tree)
+        state, apply = su.bind_module(tree, global_config)
         x = jnp.ones(5)
 
-        new_state, y = apply(state, global_config, x)
+        new_state, y = apply(state, x)
 
-        newer_state, y2 = apply(new_state, global_config, x)
+        newer_state, y2 = apply(new_state, x)
+        
+        apply = apply.bind_global_config({'train_mode': False})
 
-        _, y_eval = apply(new_state, {'train_mode': False}, x)
+        _, y_eval = apply(new_state, x)
 
         assert jnp.linalg.norm(y-5*x) > 1.0
         assert jnp.linalg.norm(y-5*y2) > 1.0
@@ -767,7 +769,7 @@ class TestNN(unittest.TestCase):
             v_dim=v_dim,
             rng=rng
         )
-        state, apply = su.bind_module(tree)
+        state, apply = su.bind_module(tree, global_config)
 
         B = 3
         T = 6
@@ -776,7 +778,7 @@ class TestNN(unittest.TestCase):
         k = jnp.reshape(jnp.arange(B*T*k_dim), (B, T, k_dim))
         v = jnp.reshape(jnp.arange(B*T*v_dim), (B, T, v_dim))
 
-        _, y = apply(state, global_config, q, k, v)
+        _, y = apply(state, q, k, v)
 
         
         # manual implementation:
@@ -823,7 +825,7 @@ class TestNN(unittest.TestCase):
             bias=bias,
             rng=rng
         )
-        state, apply = su.bind_module(tree)
+        state, apply = su.bind_module(tree, global_config)
 
         B = 3
         T = 6
@@ -835,8 +837,8 @@ class TestNN(unittest.TestCase):
         x_zeroed = jnp.array(x_np)
 
 
-        state, y = apply(state, global_config, x)
-        state, y_zeroed = apply(state, global_config, x_zeroed)    
+        state, y = apply(state, x)
+        state, y_zeroed = apply(state, x_zeroed)    
 
         assert jnp.allclose(y[:,:3,:], y_zeroed[:, :3,:])   
 
