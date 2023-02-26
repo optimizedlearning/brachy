@@ -13,7 +13,6 @@ import einops
 import pprint
 import gc
 
-from state_util import ungroup_state, group_state_list
 
 from types import SimpleNamespace
 
@@ -505,6 +504,96 @@ def CausalSelfAttention_apply(tree, global_config, x):
     causal_mask = jnp.tri(T, k=0).reshape((1, 1, T, T))
 
     return module.get_state_update(), module.MHA(x, x, x, causal_mask)
+
+
+def BatchNorm(num_features, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True, axis=1):
+    organizer = su.StateOrganizer(global_config={'train_mode': True})
+
+    if affine:
+        organizer.register_parameter('scale', jnp.ones(num_features))
+        organizer.register_parameter('bias', jnp.zeros(num_features))
+
+    organizer.register_constant('eps', eps)
+    organizer.register_constant('momentum', momentum)
+
+    if momentum is None:
+        organizer.register_constant('num_batches_tracked', 0)
+    
+    if track_running_stats:
+        organizer.register_constant('running_mean', jnp.zeros(num_features))
+        organizer.register_constant('running_var', jnp.ones(num_features))
+
+    organizer.register_aux('affine', affine)
+    organizer.register_aux('track_running_stats', track_running_stats)
+    organizer.register_aux('axis', axis)
+
+    return organizer.create_module(BatchNorm_apply)
+
+def BatchNorm_apply(tree, global_config, x):
+    #
+    # pytorch is annoying here: the actual normalization in batch norm is done using
+    # the UNBIASED variance estimate. However, the running variance statistic is calculated
+    # using the BIASED variance estimate (this is in contradiction with their docs).
+    # I'd rather use the same kind of estimate for both, but let's just try to be consistent
+    # with pytorch for now.
+    #
+    organizer = su.StateOrganizer(tree, global_config)
+
+    if organizer.momentum is None:
+        organizer.num_batches_tracked = organizer.num_batches_tracked + 1
+        momentum = 1.0/organizer.num_batches_tracked
+    else:
+        momentum = organizer.momentum
+    
+    use_running_stats = (not global_config['train_mode']) and organizer.track_running_stats
+
+    # make the bn axis the last one so that we can broadcast more easily:
+
+    permutation = list(range(x.ndim))
+    permutation[-1] = organizer.axis
+    permutation[organizer.axis] = -1
+
+    x = x.transpose(permutation)
+
+    if use_running_stats:
+        y = (x - organizer.running_mean)/jnp.sqrt(organizer.running_var)
+
+    if not use_running_stats:
+        stats_axes = tuple(range(x.ndim-1))
+
+        num_to_avg = 1
+        for d in x.shape[:-1]:
+            num_to_avg = num_to_avg * d
+
+        mean = jnp.mean(x, axis=stats_axes, keepdims=True)
+        var = (jnp.mean(x**2, axis = stats_axes, keepdims=True) - mean**2)
+
+        y = (x - mean)/jnp.sqrt(var)
+
+        if organizer.track_running_stats:
+            organizer.running_mean = (1 - momentum) * organizer.running_mean + momentum * mean
+            organizer.running_var = (1 - momentum) * organizer.running_var + momentum * var * num_to_avg/(num_to_avg - 1)
+
+    if organizer.affine:
+        y =  y * organizer.scale + organizer.bias
+
+    y = y.transpose(permutation)
+
+    return organizer.get_state(), y
+
+
+
+    
+
+
+
+
+
+
+
+
+
+
 
 
 

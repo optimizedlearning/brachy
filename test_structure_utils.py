@@ -302,10 +302,44 @@ def root_apply(tree, global_config, x):
 
     return organizer.get_state_update(), y_final
 
+def alt_root_apply(tree, global_config, x):
+
+    organizer = su.StateOrganizer(tree, global_config)
+
+    assert organizer.get_global_config('test_override_grandchild') ==  'c'
+
+    y1 = organizer[1](x)
+    y2 = organizer[2](y1)
+    y3 = organizer[3](x)
+
+    y_final = y1+y2+y3 + organizer.a
+
+    return organizer.get_state_update(), y_final
+
     
     
 
 class TestStructureUtils(unittest.TestCase):
+
+
+    def test_organizer_update(self):
+        tree, g_config = root_module()
+        tree['apply'] = alt_root_apply
+
+        organizer = su.StateOrganizer(tree, g_config)
+
+        x = jnp.ones(5)
+
+        y = organizer(x)
+
+        new_tree = organizer.get_state()
+
+        assert jnp.allclose(y, jnp.array([-1, 7, 19, 37, 121]))
+        assert same_trees(tree, new_tree, keys_to_exclude=['apply'])
+
+
+
+
 
 
     def test_empy_tree(self):

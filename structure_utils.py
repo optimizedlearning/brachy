@@ -1,3 +1,21 @@
+'''
+This file contains code for manipulating structure trees.
+A structure tree is simply a dictionary containing keys:
+
+params
+constants
+aux
+apply
+submodules
+
+With the exception of apply, the value associated with each key is itself a dict.
+The value associated with apply should be a function with signature:
+def apply(structure_tree, global_config, ...) -> structure_tree, Any
+
+
+
+'''
+
 
 import jax
 from jax.tree_util import Partial, tree_map
@@ -313,6 +331,9 @@ class StateOrganizer:
     def get_state_update(self):
         return filter_keys(self._state)
 
+    def set_train_mode(self, mode):
+        self.update_global_config('train_mode', mode)
+
     def get_global_config(self, key=None):
         global_config = {}
         for submodule, config in self._submodule_global_configs.items():
@@ -340,15 +361,17 @@ class StateOrganizer:
         global_config = self._global_config
 
         if name in state[CHILD_KEY]:
-            submodule = StateOrganizer(state[CHILD_KEY][name], global_config)
+            # submodule = StateOrganizer(state[CHILD_KEY][name], global_config)
+            submodule = state[CHILD_KEY][name]
             def apply(*args, **kwargs):
-                output = submodule(*args, **kwargs)
-                state[CHILD_KEY][name] = merge_trees(state[CHILD_KEY][name], submodule.get_state(), keys_to_merge=['params', 'constants'])
+                next_state, output = submodule['apply'](submodule, global_config, *args, **kwargs)
+                state[CHILD_KEY][name] = merge_trees(state[CHILD_KEY][name], next_state, keys_to_override=['params', 'constants'])
                 return output
             return apply
 
         # check if name is unique:
         lookup = _inverse_lookup(state, name)
+        assert len(lookup) <= 1
         if len(lookup) == 1:
             return state[lookup[0]][name]
 
@@ -363,7 +386,7 @@ class StateOrganizer:
     def __call__(self, *args, **kwargs):
         state = self._state
         next_state, output = state['apply'](state, self._global_config, *args, **kwargs)
-        self._state = merge_trees(state, next_state, keys_to_merge=['params', 'constants'])
+        self._state = merge_trees(state, next_state, keys_to_override=['params', 'constants'])
         return output
     
 

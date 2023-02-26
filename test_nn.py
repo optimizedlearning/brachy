@@ -247,82 +247,7 @@ def get_nested_state(t_module):
 
     submodules['trunk']['constants']['mul'] = t_to_np(trunk.mul)
     
-    #  = {
-    #     'embed': {
-    #         'weight': t_to_np(trunk.embed.weight)
-    #     },
-    #     'fc2': {
-    #         'weight': t_to_np(trunk.fc2.weight),
-    #         'bias': t_to_np(trunk.fc2.bias)
-    #     },
-    #     'seq': [
-    #         {
-    #             'weight': t_to_np(s.weight),
-    #             'bias': t_to_np(s.bias)
-    #         } for s in trunk.seq
-    #     ]
-    # }
-
-    # constants['head'] = {}
-
-    # constants['trunk'] = {
-    #     'embed': {},
-    #     'fc2': {},
-    #     'mul': t_to_np(trunk.mul),
-    #     'seq': [{}, {}]
-    # }
-
     return state
-
-
-
-
-
-
-
-# def get_nested_state(t_module):
-
-#     state = {
-#         'params': {},
-#         'constants': {}
-#     }
-
-#     params = state['params']
-#     constants = state['constants']
-
-#     params['next_bias'] = t_to_np(t_module.next_bias)
-#     params['head'] = {
-#         'weight': t_to_np(t_module.head.weight),
-#         'bias': t_to_np(t_module.head.bias)
-#     }
-
-#     trunk = t_module.trunk
-#     params['trunk'] = {
-#         'embed': {
-#             'weight': t_to_np(trunk.embed.weight)
-#         },
-#         'fc2': {
-#             'weight': t_to_np(trunk.fc2.weight),
-#             'bias': t_to_np(trunk.fc2.bias)
-#         },
-#         'seq': [
-#             {
-#                 'weight': t_to_np(s.weight),
-#                 'bias': t_to_np(s.bias)
-#             } for s in trunk.seq
-#         ]
-#     }
-
-#     constants['head'] = {}
-
-#     constants['trunk'] = {
-#         'embed': {},
-#         'fc2': {},
-#         'mul': t_to_np(trunk.mul),
-#         'seq': [{}, {}]
-#     }
-
-#     return state
 
 
 
@@ -376,6 +301,48 @@ def test_initialization(rng, module_gen, t_module_gen, get_t_state, sample_num=1
 class TestNN(unittest.TestCase):
 
 
+    def test_batch_norm(self):
+
+        tree, global_config = nn.BatchNorm(2)
+
+        state, apply = su.bind_module(tree, global_config)
+
+        t_module = torch.nn.BatchNorm2d(2, dtype=torch.float32)
+
+        B = 3
+        C = 2
+        H = 4
+        W = 5
+
+        x = jnp.array(range(B*C*H*W), dtype=jnp.float32).reshape((B, C, H, W))
+        x2 = jnp.sqrt(jnp.array(range( B*C*H*W), dtype=jnp.float32).reshape((B, C, H, W)))
+
+        x_t = torch.tensor(np.array(x))
+        x2_t = torch.tensor(np.array(x2))
+
+        state, y1 = apply(state, x)
+        state, y2 = apply(state, x)
+        state, y3 = apply(state, x2)
+
+        apply = apply.bind_global_config({'train_mode': False})
+        state, y4 = apply(state, x)
+
+        y1_t = t_to_np(t_module(x_t))
+        y2_t = t_to_np(t_module(x_t))
+        y3_t = t_to_np(t_module(x2_t))
+
+        t_module.eval()
+
+        y4_t = t_to_np(t_module(x_t))
+
+        assert jnp.allclose(y1, y1_t, atol=1e-6)
+
+        assert jnp.allclose(y2, y2_t, atol=1e-6)
+
+        assert jnp.allclose(y3, y3_t, atol=1e-6)
+
+
+        assert jnp.allclose(y4, y4_t, atol=1e-6)
 
     def test_identity(self):
         state, global_config = nn.Identity()
