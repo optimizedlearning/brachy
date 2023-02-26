@@ -93,7 +93,7 @@ def is_leaf(tree):
     return tree[CHILD_KEY] == {} # not in tree or tree[CHILD_KEY] in [{}, []] # just stop supporting this nonsense...
     
 
-def structure_tree_map(tree, func, initial_path=[]):
+def structure_tree_map(func, tree, initial_path=[]):
     mapped_tree = {}
     mapped_tree = func(tree, initial_path)
 
@@ -105,7 +105,7 @@ def structure_tree_map(tree, func, initial_path=[]):
     if not is_leaf(tree):
         assert is_leaf(mapped_tree), "tree_map func must return leaf nodes!"
         children = tree[CHILD_KEY]
-        mapped_tree[CHILD_KEY] = {key: tree_map(child, initial_path+[key]) for key, child in children.items()}
+        mapped_tree[CHILD_KEY] = {key: structure_tree_map(func, child, initial_path+[key]) for key, child in children.items()}
         
     return mapped_tree
 
@@ -127,14 +127,13 @@ def filter_keys(tree, *keys):
 def get_children(tree):
     return tree[CHILD_KEY]
 
-def empty_like(tree, key):
-    empty_tree = {
-        key: {},
-        CHILD_KEY: {}
-    }
-    if not is_leaf(tree):
-        empty_tree[CHILD_KEY] = empty_like(tree[CHILD_KEY], key)
-    return empty_tree
+def empty_like(tree=None):
+    empty_tree = {key: {} for key in REQUIRED_KEYS}
+    empty_tree['apply'] = lambda t, g, x: x
+    if tree is None:
+        return empty_tree
+
+    return structure_tree_map(lambda t, p: {k:v for k, v in empty_tree.items()}, tree)\
 
 def merge_trees(*trees, keys_to_merge=NON_CHILD_KEYS):
     merged = {}

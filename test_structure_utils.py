@@ -18,7 +18,7 @@ import structure_utils as su
 
 import unittest
 
-def same_dicts(*to_compare):
+def same_dicts(*to_compare, keys_to_exclude=[]):
     if len(to_compare) == 0:
         return True
     
@@ -29,6 +29,8 @@ def same_dicts(*to_compare):
             return False
 
     for key in keys:
+        if key in keys_to_exclude:
+            continue
         value = to_compare[0][key]
 
         for d in to_compare[1:]:
@@ -49,7 +51,7 @@ def same_dicts(*to_compare):
                     return False
                 continue
             
-            if not same_dicts(value, comp_value):
+            if not same_dicts(value, comp_value, keys_to_exclude=keys_to_exclude):
                 return False
 
     
@@ -57,12 +59,12 @@ def same_dicts(*to_compare):
 
 
 
-def same_trees(*trees):
+def same_trees(*trees, keys_to_exclude=[]):
     for tree in trees:
         if not su.is_structure_tree(tree, recurse=True):
             return False
 
-    return same_dicts(*trees)
+    return same_dicts(*trees,keys_to_exclude=keys_to_exclude)
 
 
 
@@ -304,6 +306,39 @@ def root_apply(tree, global_config, x):
     
 
 class TestStructureUtils(unittest.TestCase):
+
+
+    def test_empy_tree(self):
+        emptied_tree_ref = {
+            'params': {},
+            'constants': {},
+            'aux': {},
+            'apply': lambda x: x,
+            'submodules': {
+                'c': {
+                    'params': {},
+                    'constants': {},
+                    'aux': {},
+                    'apply': lambda x: x,
+                    'submodules': {
+                        'g': {
+                            'params': {},
+                            'constants': {},
+                            'aux': {},
+                            'apply': lambda x: x,
+                            'submodules': {},
+                        }
+
+                    }
+                }
+            }
+        }
+
+        emptied_tree = su.empty_like(tree)
+
+        assert same_trees(emptied_tree, emptied_tree_ref, keys_to_exclude=['apply']), f"reference empty tree:\n{emptied_tree_ref}\nReturned empty tree:\n{emptied_tree}"
+
+
 
     def test_tree_alteration(self):
         # this will probably fail if test_organizer fails because I am lazy.
