@@ -279,7 +279,7 @@ def root_module():
 
     organizer = su.StateOrganizer()
     organizer.update_global_config('test_override', 'root')
-    organizer.register_constants('a', jnp.array([1,1,1,3,3]))
+    organizer.register_constant('a', jnp.array([1,1,1,3,3]))
 
     for k in range(1,4):
         organizer.register_submodule(k, child_module(k))
@@ -313,19 +313,19 @@ class TestStructureUtils(unittest.TestCase):
             'params': {},
             'constants': {},
             'aux': {},
-            'apply': lambda x: x,
+            'apply': lambda t, g, x: x,
             'submodules': {
                 'c': {
                     'params': {},
                     'constants': {},
                     'aux': {},
-                    'apply': lambda x: x,
+                    'apply': lambda t, g, x: x,
                     'submodules': {
                         'g': {
                             'params': {},
                             'constants': {},
                             'aux': {},
-                            'apply': lambda x: x,
+                            'apply': lambda t, g, x: x,
                             'submodules': {},
                         }
 
@@ -334,9 +334,20 @@ class TestStructureUtils(unittest.TestCase):
             }
         }
 
-        emptied_tree = su.empty_like(tree)
+        emptied_tree = su.empty_tree(tree)
 
         assert same_trees(emptied_tree, emptied_tree_ref, keys_to_exclude=['apply']), f"reference empty tree:\n{emptied_tree_ref}\nReturned empty tree:\n{emptied_tree}"
+
+
+        min_empty_ref = {
+            'params': {},
+            'constants': {},
+            'aux': {},
+            'apply': lambda t, g, x: x,
+            'submodules': {}
+        }
+        min_empty = su.empty_tree()
+        assert same_trees(min_empty, min_empty_ref, keys_to_exclude=['apply']), f"reference empty tree:\n{min_empty_ref}\nReturned empty tree:\n{min_empty}"
 
 
 
@@ -348,7 +359,7 @@ class TestStructureUtils(unittest.TestCase):
 
         tree['submodules'][3] = tree_2
 
-        params, module = su.bind_module(tree, g_config)
+        params, module = su.bind_module(tree)
         module = jax.jit(module)
 
         reconstructed_tree = su.unbind_module(params, module)
@@ -357,9 +368,9 @@ class TestStructureUtils(unittest.TestCase):
 
         x = jnp.ones(5)
 
-        next_params, y_first = module(params, x)
+        next_params, y_first = module(params, g_config, x)
 
-        next_params, y_second = module(next_params, x)
+        next_params, y_second = module(next_params, g_config, x)
 
         assert jnp.allclose(y_first, jnp.array([-2, 11, 32, 65, 218]))
 

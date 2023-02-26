@@ -43,22 +43,22 @@ def apply(params: PyTree, constants: PyTree, aux: dict, apply: dict, global_conf
     tree = merge_trees(params, constants, aux, apply)
     return apply_tree(tree, global_config, *args, **kwargs)
 
-def bind_module(tree: StructureTree, global_config: dict):
-    init_params, consts_and_apply = split_tree(tree, [RETURNED_KEYS,NON_RETURNED_KEYS])
+def bind_module(tree: StructureTree):
+    init_params, aux_and_apply = split_tree(tree, [RETURNED_KEYS,NON_RETURNED_KEYS])
 
 
-    def bound(params: PyTree, *args, **kwargs) -> [PyTree, PyTree, PyTree]:
-        merged = merge_trees(params, consts_and_apply)
+    def bound(params: PyTree, global_config: dict, *args, **kwargs) -> [PyTree, PyTree, PyTree]:
+        merged = merge_trees(params, aux_and_apply)
         next_tree, output = apply_tree(merged, global_config, *args, **kwargs)
         next_params = filter_keys(next_tree)
         return next_params, output
 
-    bound.consts_and_apply = consts_and_apply
+    bound.aux_and_apply = aux_and_apply
 
     return init_params, bound
 
 def unbind_module(tree, bound):
-    return merge_trees(tree, bound.consts_and_apply)
+    return merge_trees(tree, bound.aux_and_apply)
 
 def is_structure_tree(tree, recurse=False):
     if not isinstance(tree, dict):
@@ -127,15 +127,31 @@ def filter_keys(tree, *keys):
 def get_children(tree):
     return tree[CHILD_KEY]
 
-def empty_like(tree=None):
-    empty_tree = {key: {} for key in REQUIRED_KEYS}
-    empty_tree['apply'] = lambda t, g, x: x
+def copy_dict(d):
+    return {k: v for k, v in d.items()}
+
+
+def fill_tree(tree):
+    '''
+    fills missing fields in a tree with default empty values.
+    Returns a new tree (does not modify the old one in place).
+    '''
+    filled_tree = copy_dict(tree)
+    empty = empty_tree()
+    for key in REQUIRED_KEYS:
+        if key not in filled_tree:
+            filled_tree[key] = empty[key]
+    return filled_tree
+
+def empty_tree(tree=None):
+    empty = {key: {} for key in REQUIRED_KEYS}
+    empty['apply'] = lambda t, g, x: (t, x)
     if tree is None:
-        return empty_tree
+        return empty
 
-    return structure_tree_map(lambda t, p: {k:v for k, v in empty_tree.items()}, tree)\
+    return structure_tree_map(lambda t, p: {k:v for k, v in empty.items()}, tree)
 
-def merge_trees(*trees, keys_to_merge=NON_CHILD_KEYS):
+def merge_trees(*trees, keys_to_merge=NON_CHILD_KEYS, keys_to_override=NON_CHILD_KEYS):
     merged = {}
 
     if len(trees) == 0:
@@ -146,7 +162,11 @@ def merge_trees(*trees, keys_to_merge=NON_CHILD_KEYS):
         if not is_leaf(tree):
             non_leaves.append(tree[CHILD_KEY])
         for key in tree:
-            if key == CHILD_KEY or key not in keys_to_merge:
+            if key == CHILD_KEY:
+                continue
+            if key not in keys_to_merge:
+                continue
+            if key not in keys_to_override and key in merged:
                 continue
             if key == 'apply':
                 merged[key] = tree[key]
@@ -162,7 +182,7 @@ def merge_trees(*trees, keys_to_merge=NON_CHILD_KEYS):
 
 
         merged[CHILD_KEY] = {
-            k: merge_trees(*[n[k] for n in non_leaves], keys_to_merge=keys_to_merge) for k in children_names
+            k: merge_trees(*[n[k] for n in non_leaves], keys_to_merge=keys_to_merge, keys_to_override=keys_to_override) for k in children_names
         }
     else:
         merged[CHILD_KEY] = {}
@@ -232,6 +252,13 @@ def is_jax_type(x):
         return False
     return True
 
+
+def merge_configs(*configs):
+    ret = {}
+    for config in configs:
+        ret.update(config)
+
+    return ret
 
 
 class StateOrganizer:
@@ -328,11 +355,11 @@ class StateOrganizer:
     def register_parameter(self, name, value):
         self._state['params'][name] = value
 
-    def register_constants(self, name, value):
+    def register_constant(self, name, value):
         self._state['constants'][name] = value
 
-    def register_constant(self, name, value):
-        self._state['aux'] = value
+    def register_aux(self, name, value):
+        self._state['aux'][name] = value
 
     def register_submodule(self, name, value):
         assert _is_valid_submodule(value)
