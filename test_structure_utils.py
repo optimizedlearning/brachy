@@ -70,27 +70,27 @@ def same_trees(*trees):
 
 def apply(tree, global_config, x, y):
     value = tree['params']['a'] + x -y
-    split = tree.filter_keys(['params', 'aux'])
+    split = tree.filter_keys(['params', 'constants'])
     return split, value
 
 def apply_child(tree, global_config, x, y):
-    value = 3*tree['params']['f'] + tree['aux']['g'] + x -y
-    split = tree.filter_keys(['params', 'aux'])
+    value = 3*tree['params']['f'] + tree['constants']['g'] + x -y
+    split = tree.filter_keys(['params', 'constants'])
     return split, value
 
 def apply_grand_child(tree, global_config, x, y):
-    value = -1*tree['params']['f'] + tree['aux']['g'] + x -y
-    split = tree.filter_keys(['params', 'aux'])
+    value = -1*tree['params']['f'] + tree['constants']['g'] + x -y
+    split = tree.filter_keys(['params', 'constants'])
     return split, value
 
 grand_child = {
     'params': {
         'f': jnp.zeros((2,3)),
     },
-    'aux': {
+    'constants': {
         'g': jnp.array([[33,99,3],[5,6,7]])
     },
-    'constants': {
+    'aux': {
         'comment': 'this is a grand child node',
     },
     'apply': apply_grand_child,
@@ -102,10 +102,10 @@ child = {
     'params': {
         'f': jnp.zeros((1,3)),
     },
-    'aux': {
+    'constants': {
         'g': jnp.array([[1,99,3],[5,6,7]])
     },
-    'constants': {
+    'aux': {
         'comment': 'this is a child node',
     },
     'apply': apply_child,
@@ -119,10 +119,10 @@ tree = {
         'a': jnp.ones(4),
         'b': jnp.zeros((1,2,1)),
     },
-    'aux': {
+    'constants': {
         'x': jnp.array([[1,2,3],[5,6,7]])
     },
-    'constants': {
+    'aux': {
         'comment': 'this is some text',
         4: 234
     },
@@ -155,18 +155,18 @@ params = {
 }
 
 
-aux = {
-    'aux': {
+constants = {
+    'constants': {
         'x': jnp.array([[1,2,3],[5,6,7]])
     },
     'submodules': {
         'c': {
-            'aux': {
+            'constants': {
                 'g': jnp.array([[1,99,3],[5,6,7]])
             },
             'submodules': {
                 'g': {
-                    'aux': {
+                    'constants': {
                         'g': jnp.array([[33,99,3],[5,6,7]])
                     },
                     'submodules': {}
@@ -176,22 +176,22 @@ aux = {
     }
 }
 
-apply_constants = {
+apply_aux = {
     'apply': apply,
-    'constants': {
+    'aux': {
         'comment': 'this is some text',
         4: 234
     },
     'submodules': {
         'c': {
             'apply': apply_child,
-            'constants': {
+            'aux': {
                 'comment': 'this is a child node',
             },
             'submodules': {
                 'g': {
                     'apply': apply_grand_child,
-                    'constants': {
+                    'aux': {
                         'comment': 'this is a grand child node',
                     },
                     'submodules': {}
@@ -213,17 +213,17 @@ def grandchild_module():
     params = {
         'w': jnp.array([1,2,3,4,5])
     }
-    aux = {
+    constants = {
         'g': jnp.array([-1,-1,-1,-1,3])
     }
-    constants = {
+    aux = {
         'description': 'grandchild module'
     }
 
     tree = {
         'params': params,
-        'aux': aux,
         'constants': constants,
+        'aux': aux,
         'apply': grandchild_apply,
         'submodules': {}
     }
@@ -232,7 +232,7 @@ def grandchild_module():
 
 def grandchild_apply(tree, global_config, x):
     w = tree['params']['w']
-    g = tree['aux']['g']
+    g = tree['constants']['g']
 
     y = x*w + g
 
@@ -277,7 +277,7 @@ def root_module():
 
     organizer = su.StateOrganizer()
     organizer.update_global_config('test_override', 'root')
-    organizer.register_aux('a', jnp.array([1,1,1,3,3]))
+    organizer.register_constants('a', jnp.array([1,1,1,3,3]))
 
     for k in range(1,4):
         organizer.register_submodule(k, child_module(k))
@@ -314,6 +314,7 @@ class TestStructureUtils(unittest.TestCase):
         tree['submodules'][3] = tree_2
 
         params, module = su.bind_module(tree, g_config)
+        module = jax.jit(module)
 
         reconstructed_tree = su.unbind_module(params, module)
 
@@ -349,11 +350,11 @@ class TestStructureUtils(unittest.TestCase):
 
         params, module = su.bind_module(tree, g_config)
 
+        module = jax.jit(module)
+
         reconstructed_tree = su.unbind_module(params, module)
 
         assert same_trees(tree, reconstructed_tree)
-
-        module = jax.jit(module)
 
         next_params, y_first = module(params, x)
 
@@ -368,36 +369,36 @@ class TestStructureUtils(unittest.TestCase):
 
     def test_split_merge_filter(self):
 
-        s_params, s_aux, s_apply_constants = su.split_tree(tree, ['params', 'aux', ['apply', 'constants']])
+        s_params, s_constants, s_apply_aux = su.split_tree(tree, ['params', 'constants', ['apply', 'aux']])
 
-        merged = su.merge_trees(s_params, s_aux, s_apply_constants)
+        merged = su.merge_trees(s_params, s_constants, s_apply_aux)
 
-        limited_merged = su.merge_trees(s_params, s_aux, s_apply_constants, keys_to_merge=['params', 'aux'])
+        limited_merged = su.merge_trees(s_params, s_constants, s_apply_aux, keys_to_merge=['params', 'constants'])
         filtered = su.filter_keys(tree)
 
 
 
         def new_apply(tree, global_config, x, y):
             value = tree['params']['b'] * x / y
-            split = tree.filter_keys(['params', 'aux'])
+            split = tree.filter_keys(['params', 'constants'])
             return split, value
 
         def new_child_apply(tree, global_config, x, y):
             value = tree['params']['f'] * x / y
-            split = tree.filter_keys(['params', 'aux'])
+            split = tree.filter_keys(['params', 'constants'])
             return split, value
 
         def new_grand_child_apply(tree, global_config, x, y):
-            value = tree['aux']['g'] * x / y
-            split = tree.filter_keys(['params', 'aux'])
+            value = tree['constants']['g'] * x / y
+            split = tree.filter_keys(['params', 'constants'])
             return split, value
 
         
 
 
         self.assertTrue(same_dicts(params, s_params))
-        self.assertTrue(same_dicts(aux, s_aux))
-        self.assertTrue(same_dicts(apply_constants, s_apply_constants))
+        self.assertTrue(same_dicts(constants, s_constants))
+        self.assertTrue(same_dicts(apply_aux, s_apply_aux))
 
         self.assertTrue(same_trees(merged, tree))
 

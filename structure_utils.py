@@ -19,13 +19,13 @@ STATE_ORGANIZER_RESERVED = [
 
 NON_CHILD_KEYS = [
     'params',
-    'aux',
     'constants',
+    'aux',
     'apply',
 ]
 
 NON_RETURNED_KEYS = [
-    'constants',
+    'aux',
     'apply'
 ]
 
@@ -39,8 +39,8 @@ REQUIRED_KEYS = NON_CHILD_KEYS + [CHILD_KEY]
 def apply_tree(tree: StructureTree, global_config: dict, *args, **kwargs) -> [StructureTree, PyTree]:
     return tree['apply'](tree, global_config, *args, **kwargs)
 
-def apply(params: PyTree, aux: PyTree, constants: dict, apply: dict, global_config: dict, *args, **kwargs) -> [StructureTree, PyTree]:
-    tree = merge_trees(params, aux, constants, apply)
+def apply(params: PyTree, constants: PyTree, aux: dict, apply: dict, global_config: dict, *args, **kwargs) -> [StructureTree, PyTree]:
+    tree = merge_trees(params, constants, aux, apply)
     return apply_tree(tree, global_config, *args, **kwargs)
 
 def bind_module(tree: StructureTree, global_config: dict):
@@ -111,7 +111,7 @@ def structure_tree_map(tree, func, initial_path=[]):
 
 def filter_keys(tree, *keys):
     if len(keys) == 0:
-        keys = ['params', 'aux']
+        keys = ['params', 'constants']
     base = {
         key: tree[key] for key in keys
         }
@@ -178,10 +178,10 @@ def split_tree(tree, key_sets=NON_CHILD_KEYS):
 def split_params(tree):
     other_keys = [_ for  _ in NON_CHILD_KEYS]
     other_keys.remove('params')
-    other_keys.remove('constants')
+    other_keys.remove('aux')
     other_keys.remove('apply')
 
-    return split_tree(tree, key_sets=['params', other_keys, ['constants', 'apply']])
+    return split_tree(tree, key_sets=['params', other_keys, ['aux', 'apply']])
 
 class DotDict:
     def __init__(
@@ -293,7 +293,7 @@ class StateOrganizer:
             return super().__getattribute__(name)
 
         # we've already dealt with self._state and self._global_config, so now
-        # it's safe to access it them.
+        # it's safe to access them.
         state = self._state
 
         global_config = self._global_config
@@ -302,7 +302,7 @@ class StateOrganizer:
             submodule = StateOrganizer(state[CHILD_KEY][name], global_config)
             def apply(*args, **kwargs):
                 output = submodule(*args, **kwargs)
-                state[CHILD_KEY][name] = merge_trees(state[CHILD_KEY][name], submodule.get_state(), keys_to_merge=['params', 'aux'])
+                state[CHILD_KEY][name] = merge_trees(state[CHILD_KEY][name], submodule.get_state(), keys_to_merge=['params', 'constants'])
                 return output
             return apply
 
@@ -322,18 +322,18 @@ class StateOrganizer:
     def __call__(self, *args, **kwargs):
         state = self._state
         next_state, output = state['apply'](state, self._global_config, *args, **kwargs)
-        self._state = merge_trees(state, next_state, keys_to_merge=['params', 'aux'])
+        self._state = merge_trees(state, next_state, keys_to_merge=['params', 'constants'])
         return output
     
 
     def register_parameter(self, name, value):
         self._state['params'][name] = value
 
-    def register_aux(self, name, value):
-        self._state['aux'][name] = value
+    def register_constants(self, name, value):
+        self._state['constants'][name] = value
 
     def register_constant(self, name, value):
-        self._state['constants'] = value
+        self._state['aux'] = value
 
     def register_submodule(self, name, value):
         assert _is_valid_submodule(value)
