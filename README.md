@@ -35,7 +35,11 @@ will run without error on any JAX type.
 
 The value `S["apply"]` is a function with signature:
 ```
-def apply(structure_tree: Hax.structure_tree, global_config: dict, *args, **kwargs) -> Hax.structure_tree, Any
+def apply(
+    structure_tree: Hax.structure_tree,
+    global_config: dict,
+    *args,
+    **kwargs) -> Hax.structure_tree, Any
 ```
 `Hax.structure_tree` is simply an alias for a dict, so any function that takes a dict as the first two arguments
 and returns a dict is acceptable. The additional arguments to `apply` will be implementation specific. The first
