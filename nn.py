@@ -497,7 +497,7 @@ def Dropout_apply(state, global_config, x):
 
     rng, *subkeys = jax.random.split(rng, len(x_flat)+1)
 
-    dropout_flat = [v * jax.random.bernoulli(k, prob_one)/prob_one for v, k in zip(x_flat, subkeys)]
+    dropout_flat = [v * jax.random.bernoulli(k, prob_one, shape=v.shape)/prob_one for v, k in zip(x_flat, subkeys)]
 
     x_dropout = tree_unflatten(treedef, dropout_flat)
 

@@ -563,6 +563,13 @@ class TestNN(unittest.TestCase):
         assert tree_close(no_train_dropout, x, tol=1e-5), f"dropout still applied when in eval mode"
 
 
+        x = jnp.ones(10000)
+
+        drop, state = apply(state, global_config, x)
+
+        assert jnp.allclose(jnp.mean(drop), 1.0, atol=0.01), f"dropout on large array failed! mean {jnp.mean(drop)}, drop: {drop}"
+
+
     def test_train_mode(self):
 
         def simplemodule(rng):
