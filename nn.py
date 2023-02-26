@@ -22,176 +22,29 @@ from typing import overload, Any, Callable, Literal, Optional, Sequence, Tuple, 
 
 import functools
 
-def merge_configs(*configs):
-    ret = {}
-    for config in configs:
-        ret.update(config)
+import structure_utils as su
 
-    return ret
+def Identity():
 
-
-STATE_ORGANIZER_RESERVED = [
-    '_state',
-    '_apply_fns',
-    'local_config',
-    '_global_config'
-]
-
-
-
-
-class StateOrganizer:
-
-    def __init__(
-        self,
-        state=None,
-        global_config=None,
-        local_config=None,
-        apply_fns=None,
-        ):
-        if state is None:
-            state = {
-                'params': {},
-                'constants': {}
-            }
-        if apply_fns is None:
-            apply_fns = {}
-        
-        if local_config is None:
-            local_config = {}
-
-        if global_config is None:
-            global_config = {}
-
-        self._state = state
-        self._apply_fns = apply_fns
-        self.local_config = local_config # we'll let users access local_config easily
-        self._global_config = global_config # it's possible to screw something up by incorrectly accesssing this, so we make it harder.
-
-    def update_global_config(self, update):
-        self._global_config.update(update)
-
-    def create_module(self, apply):
-        pack = functools.partial(
-            StateOrganizer,
-            local_config=self.local_config,
-            apply_fns=self._apply_fns)
-        return Partial(apply, pack), self._state, self._global_config
-
-    def get_state(self):
-        return self._state
-
-    def get_apply_fns(self):
-        return self._apply_fns
-
-    def __getattribute__(self, name):
-        if name in STATE_ORGANIZER_RESERVED:
-            return super().__getattribute__(name)
-
-
-        if name in self._apply_fns:
-            apply_fns = self._apply_fns
-            params = self._state['params']
-            constants = self._state['constants']
-            global_config = self._global_config
-            state = self.get_state()
-            def apply(*args, **kwargs):
-                x, next_state = apply_fns[name](
-                    {
-                        'params': params[name],
-                        'constants': constants[name]
-                    },
-                    global_config,
-                    *args, 
-                    **kwargs)
-
-                params[name] = next_state['params']
-                constants[name] = next_state['constants']
-                return x
-            return apply
-        
-        if name in self._state['params']:
-            return self._state['params'][name]
-        if name in self._state['constants']:
-            return self._state['constants'][name]
-
-        return super().__getattribute__(name)
-
-    def register_parameter(self, name, value):
-        assert name not in self._state['params'], f"cannot create submodule {name}: a pre-existing parameter already has this name!"
-        assert name not in self._state['constants'], f"cannot create submodule {name}: a pre-existing constant already has this name!"
-
-        self._state['params'][name] = value
-
-    def register_buffer(self, name, value):
-        assert name not in self._state['params'], f"cannot create submodule {name}: a pre-existing parameter already has this name!"
-        assert name not in self._state['constants'], f"cannot create submodule {name}: a pre-existing constant already has this name!"
-
-        self._state['constants'][name] = value
-
-    def __setattr__(self, name, value):
-        '''
-        sets an attribute.
-        We assume that value is EITHER a:
-        1. tuple (state, apply)  where state is a pytree of state info  and apply is
-            an apply function for another module.
-        2. a state, where state is a pytree of state info.
-
-        in either case, the state info is stored as a trainable parameter.
-        To make a non-trainable parameter, you must use register_buffer, as in pytorch.å
-        '''
-        if name in STATE_ORGANIZER_RESERVED:
-            return super().__setattr__(name, value)
-
-        if name in self._state['constants']:
-            self.state['constants'][name] = value
-            return super().__setattr__(name, value)  
-
-        # try to unpack:
-        if isinstance(value, tuple) and len(value) == 3:
-            apply, state, global_config = value
-            if not callable(apply):
-                # this is some weird tuple parameter assignment I guess.
-                # maybe we should just forbid such behavior, but anyway...
-                state = value
-        else:
-            state = value
-            apply = None
-        
-        if isinstance(state, dict):
-            self._state['params'][name] = state['params']
-            self._state['constants'][name] = state['constants']
-        else:
-            self._state['params'][name] = state
-
-        if apply is not None:
-            self._apply_fns[name] = apply
-            self.update_global_config(global_config)
-
-        return super().__setattr__(name, value)        
-
-def Identity(rng=None):
-
-    state = {
-        'params': {},
-        'constants': {}
-    }
+    tree = su.empty_tree()
+    tree['apply'] = Identity_apply
 
     global_config = {}
-    return Identity_apply, state, global_config
 
-def Identity_apply(state, global_config, x):
-    del global_config
-    return x, state
+    return tree, global_config
+
+def Identity_apply(tree, global_state, x):
+    return tree, x
 
 def Linear(in_features, out_features, bias=True, dtype=None, rng=None):
     if rng is None:
         rng = rng_util.split()
 
-    rng, subkey = jax.random.split(rng)
+    if bias:
+        rng, rng_bias = jax.random.split(rng)
 
     w = jax.random.uniform(
-        key=subkey,
+        key=rng,
         shape=(out_features, in_features),
         minval=-jnp.sqrt(1/in_features),
         maxval=jnp.sqrt(1/in_features),
@@ -203,26 +56,37 @@ def Linear(in_features, out_features, bias=True, dtype=None, rng=None):
     }
 
     if bias:
-        rng, subkey = jax.random.split(rng)
         b = jax.random.uniform(
-            key=subkey,
+            key=rng_bias,
             shape=(out_features,),
             minval=-jnp.sqrt(1/in_features),
             maxval=jnp.sqrt(1/in_features)
         )
         params['bias'] = b
 
-    state = {
+    tree = {
         'params': params,
         'constants': {},
+        'aux': {},
+        'apply': Linear_apply,
+        'submodules': {}
     }
+    ### the above definition could instead be written as:
+    # tree = su.fill_tree({
+    #     'params': params,
+    #     'apply': Linear_apply
+    # })
+    #
+    # We leave in the more verbose way for pedagogical reasons.
+    ####    
+    
     global_config = {}
-    return Linear_apply, state, global_config
+
+    return tree, global_config
 
 
-def Linear_apply(state, global_config, x):
-    del global_config
-    params = state['params']
+def Linear_apply(tree, global_config, x):
+    params = tree['params']
 
     weight = params['weight'].transpose()
 
@@ -233,18 +97,19 @@ def Linear_apply(state, global_config, x):
         bias = params['bias']
         r = r + bias
 
-    return r,  state
-
-
+    # technically only the 'params' and 'constants' keys in the returned
+    # tree (and its submodules) are important. The others will be ignored.
+    # So, we could instead return the value su.filter_keys(tree, ['params', 'constants']).
+    # But that is more writing.
+    return tree, r
 
 
 def Embedding(num_embeddings, embedding_dim, dtype=None, rng=None):
     if rng is None:
         rng = rng_util.split()
 
-    rng, subkey = jax.random.split(rng)
     weight = jax.random.normal(
-        key=subkey,
+        key=rng,
         shape=(num_embeddings, embedding_dim),
         dtype=dtype
     )
@@ -253,19 +118,19 @@ def Embedding(num_embeddings, embedding_dim, dtype=None, rng=None):
         'weight': weight
     }
 
-    state = {
+    tree = su.fill_tree({
         'params': params,
-        'constants': {},
-    }
+        'apply': Embedding_apply
+    })
 
     global_config = {}
-    return Embedding_apply, state, global_config
+
+    return tree, global_config
 
 
-def Embedding_apply(state, global_config, idx):
-    del global_config
-    weight = state['params']['weight']
-    return weight[idx, :], state
+def Embedding_apply(tree, global_config, idx):
+    weight = tree['params']['weight']
+    return tree, weight[idx, :]
 
 
 def Sequential(*submodules, rng=None):
@@ -293,48 +158,47 @@ def Sequential(*submodules, rng=None):
         raise ValueError(f"You must provide a non-empty list to Sequential!")
     
 
+    tree = su.empty_tree()
+    
+    for i, s in enumerate(submodules):
+        tree['submodules'][i] = s[0]
 
-    applies = [s_a[0] for s_a in submodules]
-    states = [s_a[1] for s_a in submodules]
-    configs = [s_a[2] for s_a in submodules]
+    tree['apply'] = Sequential_apply
 
-    seq_state = group_state_list(states)
-    apply_fn = Partial(Sequential_apply, applies)
+    global_config = su.merge_configs(*[s[1] for s in submodules])
 
-    global_config = merge_configs(*configs)
-
-    return apply_fn, seq_state, global_config
+    return tree, global_config
 
 
-def Sequential_apply(applies, state, global_config, x):
-    states = ungroup_state(state)
+def Sequential_apply(tree, global_config, x):
+    next_tree = su.copy_dict(tree)
 
-    next_states = []
+    for i in range(len(su.children(next_tree))):
+        submodule = next_tree['submodules'][i]
 
-    for s, apply in zip(states, applies):
-        x, state_update = apply(s, global_config, x)
-        next_states.append(state_update)
+        next_params_consts, x = submodule['apply'](submodule, global_config, x)
+        next_tree['submodules'][i] = su.merge_trees(submodule, next_params_consts)
 
-    return x, group_state_list(next_states)
+    return next_tree, x
 
 
 def LayerNorm(normalized_shape, eps=1e-05, rng=None):
 
-    organizer = StateOrganizer()
+    organizer = su.StateOrganizer()
 
     organizer.weight = jnp.ones(normalized_shape)
 
     organizer.bias = jnp.zeros(normalized_shape)
 
-    organizer.register_buffer('eps', eps)
+    organizer.register_constant('eps', eps)
 
     return organizer.create_module(Layernorm_apply)
 
 
 
 
-def Layernorm_apply(pack_state, state, global_config, x):
-    module = pack_state(state, global_config)
+def Layernorm_apply(tree, global_config, x):
+    module = su.StateOrganizer(tree, global_config)
 
     e_x = jnp.average(x, axis=-1, keepdims=True)
     v_x = jnp.average((x-e_x)**2, axis=-1, keepdims=True)
@@ -342,7 +206,7 @@ def Layernorm_apply(pack_state, state, global_config, x):
 
     ln = (x - e_x)/jnp.sqrt(v_x + module.eps) * module.weight + module.bias
 
-    return ln, module.get_state()
+    return module.get_state_update(), ln
 
 
 def Conv2d(
@@ -365,29 +229,11 @@ def Conv2d(
     if rng is None:
         rng = rng_util.split()
 
-    rng, subkey = jax.random.split(rng)
+    if bias:
+        rng, bias_rng = jax.random.split(rng)
 
     if isinstance(kernel_size, int):
         kernel_size = (kernel_size, kernel_size)
-    
-    state = {
-        'params': {},
-        'constants': {
-            'padding': padding,
-            'stride': stride,
-            'dilation': dilation,
-            'feature_group_count': groups,
-        }
-    }
-
-    k = groups / (in_channels * kernel_size[0] * kernel_size[1])
-
-    state['params']['weight'] = jax.random.uniform(
-        key=subkey,
-        shape=(out_channels, in_channels//groups, kernel_size[0], kernel_size[1]),
-        minval=-jnp.sqrt(k),
-        maxval=jnp.sqrt(k)
-    )
 
     if isinstance(stride, int):
         stride = (stride, stride)
@@ -398,25 +244,44 @@ def Conv2d(
     if isinstance(padding, int):
         padding = ((padding, padding), (padding, padding))
 
+
+    tree = su.fill_tree({
+        'params': {},
+        'constants': {
+            'padding': padding,
+            'stride': stride,
+            'dilation': dilation,
+            'feature_group_count': groups,
+        },
+        'apply': Conv2d_apply,
+    })
+
+    k = groups / (in_channels * kernel_size[0] * kernel_size[1])
+
+    tree['params']['weight'] = jax.random.uniform(
+        key=rng,
+        shape=(out_channels, in_channels//groups, kernel_size[0], kernel_size[1]),
+        minval=-jnp.sqrt(k),
+        maxval=jnp.sqrt(k)
+    )
+
     if bias:
-        rng, subkey = jax.random.split(rng)
-        state['params']['bias'] = jax.random.uniform(
-            key=subkey,
+        tree['params']['bias'] = jax.random.uniform(
+            key=bias_rng,
             shape=(out_channels,),
             minval=-jnp.sqrt(k),
             maxval=jnp.sqrt(k),
         )
 
     global_config = {}
-    return Conv2d_apply, state, global_config
-
+    return tree, global_config
     
-def Conv2d_apply(state, global_config, x):
+def Conv2d_apply(tree, global_config, x):
     '''
     perform a convolution.
 
     arguments:
-        state: a state pytree. 
+        tree: a structure tree
 
         x: a shape [N, Cin, Hin, Win] tensor, where N is usually batch dimension,
             C is channels and ... represents an arbitrary number of
@@ -433,9 +298,9 @@ def Conv2d_apply(state, global_config, x):
             will depend on potential padding of the convolution operation.
     '''
     
-    weight = state['params']['weight']
+    weight = tree['params']['weight']
 
-    constants = SimpleNamespace(**state['constants'])
+    constants = SimpleNamespace(**tree['constants'])
     
 
     
@@ -456,40 +321,43 @@ def Conv2d_apply(state, global_config, x):
 
 
 
-    if 'bias' in state['params']:
-        bias = state['params']['bias']
+    if 'bias' in tree['params']:
+        bias = tree['params']['bias']
         
         conv = conv + einops.rearrange(bias, '(N C H W) -> N C H W', N=1, H=1, W=1)
 
-    return conv, state
+    return tree, conv
 
 
 def Dropout(prob_zero=0.5, rng=None):
     if rng is None:
         rng = rng_util.split()
 
-    state = {
+    tree = su.fill_tree({
         'params': {},
         'constants': {
             'rng': rng,
             'prob_zero': prob_zero
-        }
-    }
+        },
+        'apply': Dropout_apply,
+    })
     global_config = {
         'train_mode': True
     }
-    return Dropout_apply, state, global_config
+    return tree, global_config
 
-def Dropout_apply(state, global_config, x):
+def Dropout_apply(tree, global_config, x):
     '''
     we will allow x to be a pytree for more generality, although
     that does make the implementation a bit more opaque
     '''
     if not global_config['train_mode']:
-        return x, state
+        return tree, x
 
-    rng = state['constants']['rng']
-    prob_zero = state['constants']['prob_zero']
+    next_tree = su.copy_dict(tree)
+
+    rng = next_tree['constants']['rng']
+    prob_zero = next_tree['constants']['prob_zero']
 
     prob_one = 1.0 - prob_zero
 
@@ -501,15 +369,9 @@ def Dropout_apply(state, global_config, x):
 
     x_dropout = tree_unflatten(treedef, dropout_flat)
 
-    next_state = {
-        'params': {},
-        'constants': {
-            'rng': rng,
-            'prob_zero': prob_zero
-        }
-    }
+    next_tree['constants']['rng'] = rng
 
-    return x_dropout, next_state
+    return next_tree, x_dropout
 
 
 
@@ -537,7 +399,9 @@ def MultiheadAttention(
 
     
 
-    organizer = StateOrganizer(local_config={'num_heads': num_heads})
+    organizer = su.StateOrganizer()
+
+    organizer.register_aux('num_heads', num_heads)
 
     # the pytorch implementation is full of random special cases.
     # Let's try to not do that here. This requires one special case
@@ -552,7 +416,7 @@ def MultiheadAttention(
     
     return organizer.create_module(MultiheadAttention_apply)
 
-def MultiheadAttention_apply(pack_state, state, global_config, q, k, v, mask=None):
+def MultiheadAttention_apply(tree, global_config, q, k, v, mask=None):
     # q is [B, T, C]
     # k is [B, T, K]
     # v is [B, T, V]
@@ -564,10 +428,10 @@ def MultiheadAttention_apply(pack_state, state, global_config, q, k, v, mask=Non
 
 
 
-    module = pack_state(state, global_config)
+    module = su.StateOrganizer(tree, global_config)
 
 
-    num_heads = module.local_config['num_heads']
+    num_heads = module.num_heads
 
     *_, T, C = q.shape
     H = C / num_heads 
@@ -603,7 +467,7 @@ def MultiheadAttention_apply(pack_state, state, global_config, q, k, v, mask=Non
     values = einops.einsum(att, v, 'b n t1 t2, b n t2 h -> b n t1 h') # [B, N, T, T] x [B, N, T, H] -> [B, N, T, H]
     values = einops.rearrange(values, 'b n t h -> b t (n h)') # [B N T H] -> [B T C]
 
-    return values, state
+    return module.get_state_update(), values
 
 def CausalSelfAttention(
     embed_dim,
@@ -618,7 +482,7 @@ def CausalSelfAttention(
         rng = rng_utils.split()
 
 
-    organizer = StateOrganizer()
+    organizer = su.StateOrganizer()
 
     organizer.MHA = MultiheadAttention(
         embed_dim,
@@ -629,9 +493,9 @@ def CausalSelfAttention(
 
     return organizer.create_module(CausalSelfAttention_apply)
 
-def CausalSelfAttention_apply(pack_state, state, global_config, x):
+def CausalSelfAttention_apply(tree, global_config, x):
 
-    module = pack_state(state, global_config)
+    module = su.StateOrganizer(tree, global_config)
 
     *_, T, C = x.shape
 
@@ -640,7 +504,7 @@ def CausalSelfAttention_apply(pack_state, state, global_config, x):
     # A conditional will be ok even with jax.jit since it depends on the shape)
     causal_mask = jnp.tri(T, k=0).reshape((1, 1, T, T))
 
-    return module.MHA(x, x, x, causal_mask), module.get_state()
+    return module.get_state_update(), module.MHA(x, x, x, causal_mask)
 
 
 

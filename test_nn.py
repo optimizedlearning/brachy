@@ -12,6 +12,8 @@ import torch
 
 import unittest
 
+import structure_utils as su
+
 
 def allclose(a, b):
     return jnp.allclose(a, b)#, atol=1e-4, rtol=1e-4)
@@ -65,11 +67,16 @@ def zeros_like(a):
 def tree_size(a):
     return tree_reduce(lambda x, y: x+ y.size, a, 0)
 
+
+
+
+
+
 def MyModule(vocab, embed, dim1, dim2, dim3=1, rng=None):
     if rng is None:
         rng = rng_util.split(1)
 
-    organizer = nn.StateOrganizer()
+    organizer = su.StateOrganizer()
 
     with rng_util.RNGState(rng):
 
@@ -79,7 +86,7 @@ def MyModule(vocab, embed, dim1, dim2, dim3=1, rng=None):
         r = rng_util.split(1)
 
         mul = 1 + jax.random.normal(r, (dim2,))
-        organizer.register_buffer('mul', mul)
+        organizer.register_constant('mul', mul)
 
         organizer.fc2 = nn.Linear(dim2, dim3)
 
@@ -87,16 +94,16 @@ def MyModule(vocab, embed, dim1, dim2, dim3=1, rng=None):
 
 
 
-def MyModule_apply(pack_state, state, global_config, x):
+def MyModule_apply(tree, global_config, x):
 
-    module = pack_state(state, global_config)
+    module = su.StateOrganizer(tree, global_config)
 
     x = module.embed(x)
     x = module.seq(x)
     x = module.mul * x
     x = module.fc2(x)
 
-    return x, module.get_state()
+    return module.get_state_update(), x
 
 class T_MyModule(torch.nn.Module):
 
@@ -125,7 +132,7 @@ def NextModule(vocab, embed, dim_next, dim_out, dim1, dim2, rng=None):
     if rng is None:
         rng = rng_util.split(1)
 
-    organizer = nn.StateOrganizer()
+    organizer = su.StateOrganizer()
 
 
     with rng_util.RNGState(rng):
@@ -145,8 +152,8 @@ def NextModule(vocab, embed, dim_next, dim_out, dim1, dim2, rng=None):
 
 
 
-def NextModule_apply(module, state, global_config, x):
-    module = module(state, global_config)
+def NextModule_apply(tree, global_config, x):
+    module = su.StateOrganizer(tree, global_config)
 
     x = module.trunk(x)
     x = jax.nn.relu(x)
@@ -154,7 +161,7 @@ def NextModule_apply(module, state, global_config, x):
     x = jax.nn.relu(x)
     x = module.head(x)
 
-    return x, module.get_state()
+    return module.get_state_update(), x
 
 
 class T_NextModule(torch.nn.Module):
@@ -180,45 +187,142 @@ def get_nested_state(t_module):
 
     state = {
         'params': {},
-        'constants': {}
+        'constants': {},
+        'submodules': {},
     }
 
     params = state['params']
     constants = state['constants']
+    submodules = state['submodules']
 
     params['next_bias'] = t_to_np(t_module.next_bias)
-    params['head'] = {
-        'weight': t_to_np(t_module.head.weight),
-        'bias': t_to_np(t_module.head.bias)
+
+    submodules['head'] = {
+        'params': {
+            'weight': t_to_np(t_module.head.weight),
+            'bias': t_to_np(t_module.head.bias)
+        },
+        'constants': {},
+        'submodules': {}
     }
 
     trunk = t_module.trunk
-    params['trunk'] = {
-        'embed': {
+    submodules['trunk'] = {
+        'params': {},
+        'constants': {},
+        'submodules': {}
+    }
+    submodules['trunk']['submodules']['embed'] = {
+        'params': {
             'weight': t_to_np(trunk.embed.weight)
         },
-        'fc2': {
+        'constants': {},
+        'submodules': {}
+    }
+
+    submodules['trunk']['submodules']['fc2'] = {
+        'params': {
             'weight': t_to_np(trunk.fc2.weight),
             'bias': t_to_np(trunk.fc2.bias)
         },
-        'seq': [
-            {
+        'constants': {},
+        'submodules': {}
+    }
+
+    submodules['trunk']['submodules']['seq'] = {
+        'params': {},
+        'constants': {},
+        'submodules': {}
+    }
+    submodules['trunk']['submodules']['seq']['submodules'] = {
+        i: {
+            'params': {
                 'weight': t_to_np(s.weight),
                 'bias': t_to_np(s.bias)
-            } for s in trunk.seq
-        ]
+            },
+            'constants': {},
+            'submodules': {}
+        } for i, s in enumerate(trunk.seq)
     }
 
-    constants['head'] = {}
+    submodules['trunk']['constants']['mul'] = t_to_np(trunk.mul)
+    
+    #  = {
+    #     'embed': {
+    #         'weight': t_to_np(trunk.embed.weight)
+    #     },
+    #     'fc2': {
+    #         'weight': t_to_np(trunk.fc2.weight),
+    #         'bias': t_to_np(trunk.fc2.bias)
+    #     },
+    #     'seq': [
+    #         {
+    #             'weight': t_to_np(s.weight),
+    #             'bias': t_to_np(s.bias)
+    #         } for s in trunk.seq
+    #     ]
+    # }
 
-    constants['trunk'] = {
-        'embed': {},
-        'fc2': {},
-        'mul': t_to_np(trunk.mul),
-        'seq': [{}, {}]
-    }
+    # constants['head'] = {}
+
+    # constants['trunk'] = {
+    #     'embed': {},
+    #     'fc2': {},
+    #     'mul': t_to_np(trunk.mul),
+    #     'seq': [{}, {}]
+    # }
 
     return state
+
+
+
+
+
+
+
+# def get_nested_state(t_module):
+
+#     state = {
+#         'params': {},
+#         'constants': {}
+#     }
+
+#     params = state['params']
+#     constants = state['constants']
+
+#     params['next_bias'] = t_to_np(t_module.next_bias)
+#     params['head'] = {
+#         'weight': t_to_np(t_module.head.weight),
+#         'bias': t_to_np(t_module.head.bias)
+#     }
+
+#     trunk = t_module.trunk
+#     params['trunk'] = {
+#         'embed': {
+#             'weight': t_to_np(trunk.embed.weight)
+#         },
+#         'fc2': {
+#             'weight': t_to_np(trunk.fc2.weight),
+#             'bias': t_to_np(trunk.fc2.bias)
+#         },
+#         'seq': [
+#             {
+#                 'weight': t_to_np(s.weight),
+#                 'bias': t_to_np(s.bias)
+#             } for s in trunk.seq
+#         ]
+#     }
+
+#     constants['head'] = {}
+
+#     constants['trunk'] = {
+#         'embed': {},
+#         'fc2': {},
+#         'mul': t_to_np(trunk.mul),
+#         'seq': [{}, {}]
+#     }
+
+#     return state
 
 
 
@@ -230,7 +334,7 @@ def test_initialization(rng, module_gen, t_module_gen, get_t_state, sample_num=1
     base_t = None
     for _ in range(sample_num):
         rng, subkey = jax.random.split(rng)
-        apply, state, global_config = module_gen(subkey)
+        state, global_config = module_gen(subkey)
         t_module = t_module_gen()
         t_state  = get_t_state(t_module)
 
@@ -241,6 +345,8 @@ def test_initialization(rng, module_gen, t_module_gen, get_t_state, sample_num=1
             base_t = zeros_like(state['params'])
 
 
+        # print("state:   ",tree_map(lambda x: x.shape, state['params']))
+        # print("t_state: ",tree_map(lambda x: x.shape, t_state['params']))
         mean = tree_sub_accum(mean, state['params'], t_state['params'])
         var = tree_square_sub_accum(var, state['params'], t_state['params'])
         base = tree_square_accum(base, state['params'])
@@ -272,7 +378,7 @@ class TestNN(unittest.TestCase):
 
 
     def test_identity(self):
-        apply, state, global_config = nn.Identity(None)
+        state, global_config = nn.Identity()
 
         x = jnp.array([[1,2,3],[5,6,6],[7,8,9]], dtype=float)
 
@@ -280,7 +386,7 @@ class TestNN(unittest.TestCase):
 
         x_t = torch.tensor(np.array(x))
 
-        y, _ = apply(state, global_config, x)
+        _, y = state['apply'](state, global_config, x)
 
         y_t = t_module(x_t).numpy()
 
@@ -293,13 +399,12 @@ class TestNN(unittest.TestCase):
         rng = jax.random.PRNGKey(0)
 
         def get_t_state(t_module):
-            return {
+            return su.fill_tree({
                 'params': {
                     'weight': t_to_np(t_module.weight),
                     'bias': t_to_np(t_module.bias)
-                },
-                'constants': {}
-            }
+                }
+            })
 
 
         module_gen = lambda r: nn.Linear(300, 4000, bias=True, rng=r)
@@ -308,84 +413,53 @@ class TestNN(unittest.TestCase):
 
 
 
-        apply, _, global_config = nn.Linear(3, 2, bias=True, rng=rng)
+        tree, global_config = nn.Linear(3, 2, bias=True, rng=rng)
         t_module = torch.nn.Linear(3, 2, bias=True)
         state = get_t_state(t_module)
+
+        tree = su.merge_trees(tree, state, keys_to_override=['params', 'constants'])
+        apply = tree['apply']
 
         x = jnp.array([[1,2,3],[5,6,6],[7,8,9]], dtype=jnp.float32)
         x_t = torch.tensor(np.array(x))
 
 
-        y, state = apply(state, global_config, x)
-        y2, _ = apply(state, global_config, x)
+        state, y = apply(state, global_config, x)
+        _, y2 = apply(state, global_config, x)
         y_t = t_module(x_t).detach().numpy()
 
         self.assertTrue(allclose(y_t, y))
         self.assertTrue(allclose(y_t, y2))
-
-
-    def test_conv2d(self):
-        rng = jax.random.PRNGKey(0)
-
-        def get_t_state(t_module):
-            return {
-                'params': {
-                    'weight': t_to_np(t_module.weight),
-                    'bias': t_to_np(t_module.bias)
-                },
-                'constants': {
-                    'padding': t_module.padding,
-                    'stride': t_module.stride,
-                    'dilation': t_module.dilation,
-                    'feature_group_count': t_module.groups,                    
-                }
-            }
-
-        module_gen = lambda r: nn.Conv2d(30, 40, 50, padding='same', bias=True, rng=r)
-        t_module_gen = lambda: torch.nn.Conv2d(30, 40, 50, padding='same', bias=True)
-        test_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
-
-
-        apply, _, global_config = nn.Conv2d(3, 4, 5, padding='same', bias=True, rng=rng)
-        t_module = torch.nn.Conv2d(3, 4, 5, padding='same', bias=True)
-        state = get_t_state(t_module)
-
-        x = jnp.array(np.random.normal(np.ones((2, 3, 6,7))), dtype=jnp.float32)
-        x_t = torch.tensor(np.array(x))
-
-        y, state = apply(state, global_config, x)
-        y2, _ = apply(state, global_config, x)
-        y_t = t_module(x_t).detach().numpy()
-
-        self.assertTrue(allclose(y_t, y))
-        self.assertTrue(allclose(y_t, y2))
-
 
 
     def test_embedding(self):
         rng =  jax.random.PRNGKey(0)
 
         def get_t_state(t_module):
-            return {
+            return su.fill_tree({
                 'params': {
                     'weight': t_to_np(t_module.weight)
                 },
                 'constants': {}
-            }
+            })
 
         module_gen = lambda r: nn.Embedding(500, 1000, rng=r)
         t_module_gen = lambda : torch.nn.Embedding(500, 1000)
         test_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
 
-        apply, _, global_config = nn.Embedding(30, 10, rng=rng)
+        tree, global_config = nn.Embedding(30, 10, rng=rng)
         t_module = torch.nn.Embedding(30, 10)
         state = get_t_state(t_module)
+
+        tree = su.merge_trees(tree, state, keys_to_override=['params', 'constants'])
+
+        apply = tree['apply']
 
         x = jnp.array([0, 2, 29, 7, 4])
         x_t = torch.tensor(np.array(x))
 
-        y, state = apply(state, global_config, x)
-        y2, _ = apply(state, global_config, x)
+        tree, y = apply(tree, global_config, x)
+        _, y2 = apply(tree, global_config, x)
         y_t = t_module(x_t).detach().numpy()
 
         self.assertTrue(allclose(y_t, y))
@@ -393,19 +467,29 @@ class TestNN(unittest.TestCase):
 
     def test_sequential(self):
         rng =  jax.random.PRNGKey(0)
-        def get_t_state(t_module):
+        def get_t_state_for_init_test(t_module):
             params = []
-            constants = []
             for l in t_module:
                 params.append({
                     'weight': t_to_np(l.weight),
                     'bias': t_to_np(l.bias)
                 })
-                constants.append({})
             state = {
                 'params': params,
-                'constants': constants
+                'constants': {}
             }
+            return state
+
+        def get_t_state_for_apply_test(t_module):
+            state = su.empty_tree()
+            submodules = state['submodules']
+            for i, l in enumerate(t_module):
+                submodules[i] = su.fill_tree({
+                    'params': {
+                        'weight': t_to_np(l.weight),
+                        'bias': t_to_np(l.bias),
+                    }
+                })
             return state
             
         def module_gen(r):
@@ -415,8 +499,10 @@ class TestNN(unittest.TestCase):
                     nn.Linear(1000, 500),
                     nn.Linear(500, 50)
                 ]
-                apply, state, global_config = nn.Sequential(*chain)
-            return apply, state, global_config
+                tree, global_config = nn.Sequential(*chain)
+            # we do some hackery here to make the testing code work the same...
+            tree['params'] = [tree['submodules'][i]['params'] for i in range(len(tree['submodules']))]
+            return tree, global_config
 
         def t_module_gen():
             return torch.nn.Sequential(*[
@@ -425,7 +511,7 @@ class TestNN(unittest.TestCase):
                 torch.nn.Linear(500, 50)
             ])
 
-        test_initialization(rng, module_gen, t_module_gen, get_t_state, 500)
+        test_initialization(rng, module_gen, t_module_gen, get_t_state_for_init_test, 500)
 
         with rng_util.RNGState(rng):
             chain = [
@@ -433,20 +519,25 @@ class TestNN(unittest.TestCase):
                 nn.Linear(10, 20),
                 nn.Linear(20, 3)
             ]
-            apply, _, global_config = nn.Sequential(*chain)
+            tree, global_config = nn.Sequential(*chain)
 
         t_module = torch.nn.Sequential(*[
             torch.nn.Linear(3, 10),
             torch.nn.Linear(10, 20),
             torch.nn.Linear(20, 3)
         ])
-        state = get_t_state(t_module)
+        state = get_t_state_for_apply_test(t_module)
+
+        tree = su.merge_trees(tree, state, keys_to_override=['params', 'constants'])
+
+        apply = tree['apply']
 
         x = jnp.array([[1,2,3],[5,6,6],[7,8,9]], dtype=float)
         x_t = torch.tensor(np.array(x))
 
-        y, state = apply(state, global_config, x)
-        y2, _ = apply(state, global_config, x)
+        tree, y = apply(tree, global_config, x)
+        tree, y2 = apply(tree, global_config, x)
+
         y_t = t_module(x_t).detach().numpy()
 
         self.assertTrue(allclose(y_t, y))
@@ -458,7 +549,7 @@ class TestNN(unittest.TestCase):
         rng =  jax.random.PRNGKey(0)
 
         def get_t_state(t_module):
-            return {
+            return su.fill_tree({
                 'params': {
                     'weight': t_to_np(t_module.weight),
                     'bias': t_to_np(t_module.bias)
@@ -466,26 +557,75 @@ class TestNN(unittest.TestCase):
                 'constants': {
                     'eps': 1e-5
                 }
-            }
+            })
 
         module_gen = lambda r: nn.LayerNorm(300, rng=r)
         t_module_gen = lambda : torch.nn.LayerNorm(300)
 
         test_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
 
-        apply, _, global_config = nn.LayerNorm(3, rng=rng)
+        tree, global_config = nn.LayerNorm(3, rng=rng)
         t_module = torch.nn.LayerNorm(3)
         state = get_t_state(t_module)
+
+        tree = su.merge_trees(tree, state, keys_to_override=['params', 'constants'])
+
+        apply = tree['apply']
+
         x = jnp.array([[1,2,3],[5,6,6],[7,8,9]], dtype=float)
         x_t = torch.tensor(np.array(x))
 
-        y, state = apply(state, global_config, x)
-        y2, _ = apply(state, global_config, x)
+        tree, y = apply(tree, global_config, x)
+        _, y2 = apply(tree, global_config, x)
         y_t = t_module(x_t).detach().numpy()
 
         self.assertTrue(allclose(y_t, y))
         self.assertTrue(allclose(y_t, y2))
  
+
+
+
+    def test_conv2d(self):
+        rng = jax.random.PRNGKey(0)
+
+        def get_t_state(t_module):
+            return su.fill_tree({
+                'params': {
+                    'weight': t_to_np(t_module.weight),
+                    'bias': t_to_np(t_module.bias)
+                },
+                'constants': {
+                    'padding': t_module.padding,
+                    'stride': t_module.stride,
+                    'dilation': t_module.dilation,
+                    'feature_group_count': t_module.groups,                    
+                }
+            })
+
+        module_gen = lambda r: nn.Conv2d(30, 40, 50, padding='same', bias=True, rng=r)
+        t_module_gen = lambda: torch.nn.Conv2d(30, 40, 50, padding='same', bias=True)
+        test_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
+
+
+        tree, global_config = nn.Conv2d(3, 4, 5, padding='same', bias=True, rng=rng)
+        t_module = torch.nn.Conv2d(3, 4, 5, padding='same', bias=True)
+        state = get_t_state(t_module)
+
+        tree = su.merge_trees(tree, state, keys_to_override=['params', 'constants'])
+
+        apply = tree['apply']
+
+        x = jnp.array(np.random.normal(np.ones((2, 3, 6,7))), dtype=jnp.float32)
+        x_t = torch.tensor(np.array(x))
+
+        tree, y = apply(tree, global_config, x)
+        _, y2 = apply(tree, global_config, x)
+        y_t = t_module(x_t).detach().numpy()
+
+        self.assertTrue(allclose(y_t, y))
+        self.assertTrue(allclose(y_t, y2))
+
+
 
     def test_rngstate(self):
         rng = jax.random.PRNGKey(0)
@@ -507,20 +647,20 @@ class TestNN(unittest.TestCase):
     def test_nested_modules(self):
         rng = jax.random.PRNGKey(0)
     
-        apply, _, global_config = NextModule(5, 10, 20, 2, 10, 20, rng=rng)
+        tree, global_config = NextModule(5, 10, 20, 2, 10, 20, rng=rng)
+        init_state, apply = su.bind_module(tree)
 
         t_module = T_NextModule(5, 10, 20, 2, 10, 20)
 
         state = get_nested_state(t_module)
 
 
-
     
         x = jnp.ones(10, dtype=int)
         x_t = torch.tensor(np.array(x))
 
-        y, state = apply(state, global_config, x)
-        y2, _ = apply(state, global_config, x)
+        state, y = apply(state, global_config, x)
+        _, y2 = apply(state, global_config, x)
         y_t = t_module(x_t).detach().numpy()
 
         self.assertTrue(allclose(y_t, y))
@@ -530,7 +670,8 @@ class TestNN(unittest.TestCase):
     def test_dropout(self):
         rng = jax.random.PRNGKey(0)
 
-        apply, state, global_config = nn.Dropout(0.25, rng)
+        tree, global_config = nn.Dropout(0.25, rng)
+        apply = tree['apply']
 
 
         x = {
@@ -546,7 +687,7 @@ class TestNN(unittest.TestCase):
         num_trials = 2000
 
         for _ in range(num_trials):
-            drop, state = apply(state, global_config, x)
+            tree, drop = apply(tree, global_config, x)
             sum_dropout = tree_map(
                 lambda a, b: a + b, sum_dropout, drop
             )
@@ -558,14 +699,14 @@ class TestNN(unittest.TestCase):
         assert tree_close(mean_dropout, x, tol=0.05), f"not close: {mean_dropout}, {x}"
 
         
-        no_train_dropout, state = apply(state, {'train_mode': False}, x)
+        tree, no_train_dropout = apply(tree, {'train_mode': False}, x)
 
         assert tree_close(no_train_dropout, x, tol=1e-5), f"dropout still applied when in eval mode"
 
 
         x = jnp.ones(10000)
 
-        drop, state = apply(state, global_config, x)
+        tree, drop = apply(tree, global_config, x)
 
         assert jnp.allclose(jnp.mean(drop), 1.0, atol=0.01), f"dropout on large array failed! mean {jnp.mean(drop)}, drop: {drop}"
 
@@ -573,31 +714,32 @@ class TestNN(unittest.TestCase):
     def test_train_mode(self):
 
         def simplemodule(rng):
-            organizer = nn.StateOrganizer()
+            organizer = su.StateOrganizer()
 
             organizer.mul = 5.0
             organizer.dropout = nn.Dropout(0.4, rng=rng)
 
             return organizer.create_module(simpleapply)
 
-        def simpleapply(pack_state, state, global_config, x):
-            module = pack_state(state, global_config)
+        def simpleapply(tree, global_config, x):
+            module = su.StateOrganizer(tree, global_config)
 
             m = x * module.mul
 
             d = module.dropout(m)
 
-            return d, module.get_state()
-
+            return module.get_state_update(), d
+        
     
-        apply, state, global_config = simplemodule(jax.random.PRNGKey(0))
+        tree, global_config = simplemodule(jax.random.PRNGKey(0))
+        state, apply = su.bind_module(tree)
         x = jnp.ones(5)
 
-        y, new_state = apply(state, global_config, x)
+        new_state, y = apply(state, global_config, x)
 
-        y2, _ = apply(new_state, global_config, x)
+        newer_state, y2 = apply(new_state, global_config, x)
 
-        y_eval, _ = apply(new_state, {'train_mode': False}, x)
+        _, y_eval = apply(new_state, {'train_mode': False}, x)
 
         assert jnp.linalg.norm(y-5*x) > 1.0
         assert jnp.linalg.norm(y-5*y2) > 1.0
@@ -617,7 +759,7 @@ class TestNN(unittest.TestCase):
         k_dim = 5
         v_dim = 4
 
-        apply, state, global_config = nn.MultiheadAttention(
+        tree, global_config = nn.MultiheadAttention(
             embed_dim=embed_dim,
             num_heads=num_heads,
             bias=bias,
@@ -625,6 +767,7 @@ class TestNN(unittest.TestCase):
             v_dim=v_dim,
             rng=rng
         )
+        state, apply = su.bind_module(tree)
 
         B = 3
         T = 6
@@ -633,15 +776,15 @@ class TestNN(unittest.TestCase):
         k = jnp.reshape(jnp.arange(B*T*k_dim), (B, T, k_dim))
         v = jnp.reshape(jnp.arange(B*T*v_dim), (B, T, v_dim))
 
-        y, _ = apply(state, global_config, q, k, v)
+        _, y = apply(state, global_config, q, k, v)
 
         
         # manual implementation:
-        params = state['params']
+        submodules = state['submodules']
 
-        q_p = q @ params['q_proj']['weight'].T + params['q_proj']['bias']
-        k_p = k @ params['k_proj']['weight'].T + params['k_proj']['bias']
-        v_p = v @ params['v_proj']['weight'].T + params['v_proj']['bias']
+        q_p = q @ submodules['q_proj']['params']['weight'].T + submodules['q_proj']['params']['bias']
+        k_p = k @ submodules['k_proj']['params']['weight'].T + submodules['k_proj']['params']['bias']
+        v_p = v @ submodules['v_proj']['params']['weight'].T + submodules['v_proj']['params']['bias']
 
         # extract heads manually
         q_h = [q_p[:, :, :head_size], q_p[:, :, -head_size:]]
@@ -674,12 +817,13 @@ class TestNN(unittest.TestCase):
         num_heads = 2
         bias = True
 
-        apply, state, global_config = nn.CausalSelfAttention(
+        tree, global_config = nn.CausalSelfAttention(
             embed_dim=embed_dim,
             num_heads=num_heads,
             bias=bias,
             rng=rng
         )
+        state, apply = su.bind_module(tree)
 
         B = 3
         T = 6
@@ -691,8 +835,8 @@ class TestNN(unittest.TestCase):
         x_zeroed = jnp.array(x_np)
 
 
-        y, state = apply(state, global_config, x)
-        y_zeroed, state = apply(state, global_config, x_zeroed)    
+        state, y = apply(state, global_config, x)
+        state, y_zeroed = apply(state, global_config, x_zeroed)    
 
         assert jnp.allclose(y[:,:3,:], y_zeroed[:, :3,:])   
 
