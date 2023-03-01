@@ -513,8 +513,8 @@ def CausalSelfAttention_apply(tree, global_config, x):
     return module.get_state_update(), module.MHA(x, x, x, causal_mask)
 
 
-def BatchNorm(num_features, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True, axis=1):
-    organizer = su.StateOrganizer(global_config={'train_mode': True})
+def BatchNorm(num_features, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True, axis=None, batch_axis=None):
+    organizer = su.StateOrganizer(global_config={'train_mode': True, 'batch_axis': batch_axis})
 
     if affine:
         organizer.register_parameter('scale', jnp.ones(num_features))
@@ -546,6 +546,17 @@ def BatchNorm_apply(tree, global_config, x):
     #
     organizer = su.StateOrganizer(tree, global_config)
 
+    batch_axis = global_config['batch_axis']
+
+    axis = organizer.axis
+    if axis is None:
+        if batch_axis is not None:
+            axis = 0
+        else:
+            axis = 1
+
+
+
     if organizer.momentum is None:
         organizer.num_batches_tracked = organizer.num_batches_tracked + 1
         momentum = 1.0/organizer.num_batches_tracked
@@ -554,37 +565,60 @@ def BatchNorm_apply(tree, global_config, x):
     
     use_running_stats = (not global_config['train_mode']) and organizer.track_running_stats
 
-    # make the bn axis the last one so that we can broadcast more easily:
 
-    permutation = list(range(x.ndim))
-    permutation[-1] = organizer.axis
-    permutation[organizer.axis] = -1
+    broadcast_shape = [1]* x.ndim
+    broadcast_shape[axis] = x.shape[axis]
+    broadcast_shape = tuple(broadcast_shape)
 
-    x = x.transpose(permutation)
 
     if use_running_stats:
-        y = (x - organizer.running_mean)/jnp.sqrt(organizer.running_var)
+        y = (x - organizer.running_mean.reshape(broadcast_shape))/jnp.sqrt(organizer.running_var.reshape(broadcast_shape))
 
     if not use_running_stats:
-        stats_axes = tuple(range(x.ndim-1))
+        stats_axes = list(range(x.ndim))
+        stats_axes.pop(axis)
+        stats_axes = tuple(stats_axes)
 
-        num_to_avg = 1
-        for d in x.shape[:-1]:
-            num_to_avg = num_to_avg * d
+
 
         mean = jnp.mean(x, axis=stats_axes, keepdims=True)
-        var = (jnp.mean(x**2, axis = stats_axes, keepdims=True) - mean**2)
+        second_moment = jnp.mean(x**2, axis = stats_axes, keepdims=True)
+
+        if batch_axis is not None:
+            if isinstance(batch_axis, str):
+                batch_axis = [batch_axis]
+
+            for ba in batch_axis:
+                mean = jax.lax.pmean(mean, axis_name=ba)
+                second_moment = jax.lax.pmean(second_moment, axis_name=ba)
+
+
+        var = second_moment - mean**2
+
 
         y = (x - mean)/jnp.sqrt(var)
 
         if organizer.track_running_stats:
-            organizer.running_mean = (1 - momentum) * organizer.running_mean + momentum * mean
-            organizer.running_var = (1 - momentum) * organizer.running_var + momentum * var * num_to_avg/(num_to_avg - 1)
+            buffer_shape = organizer.running_mean.shape
+
+
+            if batch_axis is None:
+                # I can't figure out how to get ahold of the size of the batch axis when it is pmapped or vmapped.
+                # Probably there is a way, but really you shouldn't be pmapping or vmapping something so small that
+                # not doing this multiply will make any difference.
+                # And anyway, we are only doing this because pytorch has a weirdly inconsistent usage anyhow...
+                num_to_avg = 1/x.shape[axis]
+                for d in x.shape:
+                    num_to_avg = num_to_avg * d
+                var *= num_to_avg/(num_to_avg - 1)
+
+
+            organizer.running_mean = (1 - momentum) * organizer.running_mean + momentum * mean.reshape(buffer_shape)
+            organizer.running_var = (1 - momentum) * organizer.running_var + momentum * var.reshape(buffer_shape) 
+
 
     if organizer.affine:
-        y =  y * organizer.scale + organizer.bias
-
-    y = y.transpose(permutation)
+        y =  y * organizer.scale.reshape(broadcast_shape) + organizer.bias.reshape(broadcast_shape)
 
     return organizer.get_state(), y
 

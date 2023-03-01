@@ -307,6 +307,7 @@ class TestNN(unittest.TestCase):
 
         state, apply = su.bind_module(tree, global_config)
 
+
         t_module = torch.nn.BatchNorm2d(2, dtype=torch.float32)
 
         B = 3
@@ -322,10 +323,17 @@ class TestNN(unittest.TestCase):
 
         state, y1 = apply(state, x)
         state, y2 = apply(state, x)
+        
         state, y3 = apply(state, x2)
 
-        apply = apply.bind_global_config({'train_mode': False})
+        apply = apply.bind_global_config({'train_mode': False, 'batch_axis': None})
         state, y4 = apply(state, x)
+
+        apply = apply.bind_global_config({'train_mode': True, 'batch_axis': 'batch'})
+        vmap_apply = jax.vmap(apply, in_axes=[None, 0], out_axes=(None, 0), axis_name='batch')
+        
+        state, y5 = vmap_apply(state, x2)
+        state, y6 = vmap_apply(state, x)
 
         y1_t = t_to_np(t_module(x_t))
         y2_t = t_to_np(t_module(x_t))
@@ -335,6 +343,11 @@ class TestNN(unittest.TestCase):
 
         y4_t = t_to_np(t_module(x_t))
 
+        t_module.train()
+        y5_t = t_to_np(t_module(x2_t))
+
+        y6_t = t_to_np(t_module(x_t))
+
         assert jnp.allclose(y1, y1_t, atol=1e-6)
 
         assert jnp.allclose(y2, y2_t, atol=1e-6)
@@ -342,7 +355,11 @@ class TestNN(unittest.TestCase):
         assert jnp.allclose(y3, y3_t, atol=1e-6)
 
 
-        assert jnp.allclose(y4, y4_t, atol=1e-6)
+        assert jnp.allclose(y4, y4_t, atol=1e-6), f"y4:\n{y4}\ny4_t:{y4_t}"
+
+        assert jnp.allclose(y5, y5_t, atol=1e-6)
+
+        assert jnp.allclose(y6, y6_t, atol=1e-6)
 
     def test_identity(self):
         state, global_config = nn.Identity()
