@@ -139,18 +139,6 @@ def softmax_cross_entropy(input, target, weight=None, ignore_index=-100, reducti
         return jnp.mean(losses, where=no_ignore)
     if reduction == 'sum':
         return jnp.sum(losses, where=no_ignore)
-        
-
-
-    # # ignore_labels = jnp.where(no_ignore, labels, jnp.zeros_like(labels))
-
-    # # total = jax.lax.stop_gradient(jnp.sum(no_ignore))
-
-    # label_logits = jnp.take_along_axis(logits, ignore_labels[..., None], axis=-1)[..., 0]
-
-    # # log_normalizers = jnp.log(jnp.sum(jnp.exp(logits), axis=-1))
-    # # return jnp.sum(jnp.where(no_ignore, log_normalizers - label_logits, jnp.zeros_like(labels)))/total
-
 
 
 

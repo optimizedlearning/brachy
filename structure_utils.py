@@ -71,7 +71,7 @@ def bind_global_config(aux_and_apply, global_config: dict):
     bound.bind_global_config = Partial(bind_global_config, aux_and_apply)
     return bound
 
-def bind_module(tree: StructureTree, global_config: dict):
+def bind_module(tree: StructureTree, global_config: dict) -> [dict, Callable[[Any], Any]]:
     init_params, aux_and_apply = split_tree(tree, [RETURNED_KEYS,NON_RETURNED_KEYS])
 
 
@@ -235,30 +235,6 @@ def split_params(tree):
 
     return split_tree(tree, key_sets=['params', other_keys, ['aux', 'apply']])
 
-class DotDict:
-    def __init__(
-        self,
-        **kwargs
-    ):
-        self.__dotdict_data = kwargs
-
-
-    def __getattribute__(self, name):
-        if name != '__dotdict_data':
-            data = self.__dotdict_data
-            if name in data:
-                return data
-        
-        return super().__getattribute__(name)
-
-    def __getitem__(self, key):
-        return self.__dotdict_data[key]
-
-    
-    def __setattr__(self, name, value):
-        self.__dotdict_data[name] = value
-
-
 
 def _inverse_lookup(tree, name):
     lookup = []
@@ -349,9 +325,6 @@ class StateOrganizer:
         
         return global_config[key]
 
-    # def create_module(self):
-    #     return self._state, self.get_global_config()
-
     def get_apply_fns(self):
         return self._apply_fns
 
@@ -366,13 +339,8 @@ class StateOrganizer:
         global_config = self._global_config
 
         if name in state[CHILD_KEY]:
-            # submodule = StateOrganizer(state[CHILD_KEY][name], global_config)
-            submodule = state[CHILD_KEY][name]
-            def apply(*args, **kwargs):
-                next_state, output = submodule['apply'](submodule, global_config, *args, **kwargs)
-                state[CHILD_KEY][name] = merge_trees(state[CHILD_KEY][name], next_state, keys_to_override=['params', 'constants'])
-                return output
-            return apply
+            submodule = StateOrganizer(state[CHILD_KEY][name], global_config)
+            return submodule
 
         # check if name is unique:
         lookup = _inverse_lookup(state, name)
@@ -391,7 +359,15 @@ class StateOrganizer:
     def __call__(self, *args, **kwargs):
         state = self._state
         next_state, output = state['apply'](state, self._global_config, *args, **kwargs)
-        self._state = merge_trees(state, next_state, keys_to_override=['params', 'constants'])
+
+        # Tricky: we must change the keys of self._state directly: we cannot simply reassign state
+        # as self._state = merge(self._state, next_state, keys_to_override=['params','constants'])
+        # because self._state may be pointed to by a parent StateOrganizer and we need these state
+        # changes to be propogated up to the parent's ._state
+        self._state['params'] = next_state['params']
+        self._state['constants'] = next_state['constants']
+
+
         return output
     
 

@@ -322,6 +322,51 @@ def alt_root_apply(tree, global_config, x):
 class TestStructureUtils(unittest.TestCase):
 
 
+    def test_submodule_access(self):
+        def mutating_state(n):
+            organizer = su.StateOrganizer()
+            organizer.foo = jnp.array(range(n))
+            return organizer.create_module(mutating_apply)
+
+        def mutating_apply(tree, global_config, x):
+            organizer = su.StateOrganizer(tree, global_config)
+            y = x * organizer.foo
+
+            organizer.foo = 2 + organizer.foo
+
+            return organizer.get_state(), y
+
+        def outer():
+            organizer = su.StateOrganizer()
+            organizer.bar = jnp.ones(5)
+            organizer.submodule = mutating_state(5)
+
+            return organizer.create_module(outer_apply)
+        def outer_apply(tree, global_config, x):
+            organizer = su.StateOrganizer(tree, global_config)
+            y = x + organizer.bar
+            y = organizer.submodule(y)
+            y = organizer.submodule.foo + y
+
+            return organizer.get_state(), y
+
+        tree, global_config = outer()
+
+        state, apply = su.bind_module(tree, global_config)
+
+        x = jnp.zeros(5)
+
+        state, y = apply(state, x)
+
+        assert jnp.allclose(y, jnp.array([2, 4, 6, 8, 10]))
+
+
+
+
+
+        
+
+
     def test_organizer_update(self):
         tree, g_config = root_module()
         tree['apply'] = alt_root_apply
