@@ -293,6 +293,11 @@ def merge_configs(*configs):
 
     return ret
 
+def create_tree_from_func(func):
+    def wrapped_func(tree, global_config, *args, **kwargs):
+        return tree, func(*args, **kwargs)
+
+    return fill_tree({'apply': wrapped_func})
 
 class StateOrganizer:
 
@@ -437,6 +442,10 @@ class StateOrganizer:
         if _is_valid_submodule(value):
             self.register_submodule(name, value)
             return value
+        elif callable(value):
+            # if you try to make a function attribute, we will create a new submodule
+            # for it.
+            self.register_submodule(name, create_tree_from_func(value))
         elif is_jax_type(value):
             # by default we put things in params if they are jittable
             state['params'][name] = value

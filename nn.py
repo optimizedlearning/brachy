@@ -10,6 +10,7 @@ from jax.tree_util import Partial
 
 import einops
 
+import functional
 import pprint
 import gc
 
@@ -131,6 +132,12 @@ def Embedding_apply(tree, global_config, idx):
     weight = tree['params']['weight']
     return tree, weight[idx, :]
 
+
+def module_from_func(func):
+    def wrapped_func(tree, global_config, *args, **kwargs):
+        return tree, func(*args, **kwargs)
+    tree = su.fill_tree({'apply': wrapped_func})
+    return tree, {}
 
 def Sequential(*submodules, rng=None):
     '''
@@ -459,7 +466,7 @@ def MultiheadAttention_apply(tree, global_config, q, k, v, mask=None):
         # unnormalized = jnp.where(broadcast_mask, unnormalized, 0.0)
         # att = unnormalized / jnp.sum(unnormalized, axis=-1, where=broadcast_mask, keepdims=True)
 
-        att = softmax(logits, axis=-1, where=broadcast_mask) # [B, N, T, T] -> [B, N, T, T]
+        att = functional.softmax(logits, axis=-1, where=broadcast_mask) # [B, N, T, T] -> [B, N, T, T]
     else:
         att = jax.nn.softmax(logits, axis=-1)
 
@@ -581,86 +588,3 @@ def BatchNorm_apply(tree, global_config, x):
 
     return organizer.get_state(), y
 
-
-
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-# the jax.nn.softmax function has some instabilities related to the where argument.
-# This one doesn't
-def softmax(x: Array,
-            axis: Optional[Union[int, Tuple[int, ...]]] = -1,
-            where: Optional[Array] = None) -> Array:
-  r"""Softmax function.
-
-  Computes the function which rescales elements to the range :math:`[0, 1]`
-  such that the elements along :code:`axis` sum to :math:`1`.
-
-  .. math ::
-    \mathrm{softmax}(x) = \frac{\exp(x_i)}{\sum_j \exp(x_j)}
-
-  Args:
-    x : input array
-    axis: the axis or axes along which the softmax should be computed. The
-      softmax output summed across these dimensions should sum to :math:`1`.
-      Either an integer or a tuple of integers.
-    where: Elements to include in the :code:`softmax`.
-  """
-  x_max = jnp.max(x, axis, where=where, initial=-jnp.inf, keepdims=True)
-  unnormalized = jnp.exp(x - lax.stop_gradient(x_max))
-  if where is not None:
-    unnormalized = jnp.where(where, unnormalized, 0.0)
-  return unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
-
-def softmax_cross_entropy(logits, labels):
-    """Computes softmax cross entropy between sets of logits and integer labels.
-    Measures the probability error in discrete classification tasks in which
-    the classes are mutually exclusive (each entry is in exactly one class).
-    For example, each CIFAR-10 image is labeled with one and only one label:
-    an image can be a dog or a truck, but not both.
-    References:
-    [Goodfellow et al, 2016](http://www.deeplearningbook.org/contents/prob.html)
-    Args:
-    logits: Unnormalized log probabilities, with shape `[..., num_classes]`.
-    labels: Integers specifying the correct class for each input, with shape
-        `[...]`.
-    Returns:
-    Cross entropy between each prediction and the corresponding target
-    distributions, with shape `[...]`.
-    """
-    # This is like jnp.take_along_axis(jax.nn.log_softmax(...), ...) except that
-    # we avoid subtracting the normalizer from all values, just from the values
-    # for the correct labels.
-
-
-    no_ignore = jax.lax.stop_gradient(labels!=-100)
-    logits_max = jnp.max(logits, axis=-1, keepdims=True, where=no_ignore, initial=0.0)
-    logits = logits - jax.lax.stop_gradient(logits_max)
-
-
-    log_normalizer = jnp.log(jnp.sum(jnp.exp(logits), axis=-1, where=no_ignore))
-
-    ignore_labels = jnp.where(no_ignore, labels, jnp.zeros_like(labels))
-    label_logits = jnp.take_along_axis(logits, ignore_labels[..., None], axis=-1)[..., 0]
-
-    return jnp.mean(log_normalizers - label_logits, axis=-1, where=no_ignore)
-
-    # # ignore_labels = jnp.where(no_ignore, labels, jnp.zeros_like(labels))
-
-    # # total = jax.lax.stop_gradient(jnp.sum(no_ignore))
-
-    # label_logits = jnp.take_along_axis(logits, ignore_labels[..., None], axis=-1)[..., 0]
-
-    # # log_normalizers = jnp.log(jnp.sum(jnp.exp(logits), axis=-1))
-    # # return jnp.sum(jnp.where(no_ignore, log_normalizers - label_logits, jnp.zeros_like(labels)))/total
