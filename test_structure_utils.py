@@ -323,32 +323,36 @@ class TestStructureUtils(unittest.TestCase):
 
 
     def test_submodule_access(self):
-        def mutating_state(n):
-            organizer = su.StateOrganizer()
+        @su.organized_init
+        def mutating_state(organizer, n):
             organizer.foo = jnp.array(range(n))
-            return organizer.create_module(mutating_apply)
+            return organizer.set_apply(mutating_apply)
 
-        def mutating_apply(tree, global_config, x):
-            organizer = su.StateOrganizer(tree, global_config)
+        @su.organized_apply
+        def mutating_apply(organizer, x):
+            # organizer = su.StateOrganizer(tree, global_config)
             y = x * organizer.foo
 
             organizer.foo = 2 + organizer.foo
 
-            return organizer.get_state(), y
+            # return organizer.get_state(), y
+            return y
 
-        def outer():
-            organizer = su.StateOrganizer()
+        @su.organized_init
+        def outer(organizer):
             organizer.bar = jnp.ones(5)
             organizer.submodule = mutating_state(5)
 
-            return organizer.create_module(outer_apply)
-        def outer_apply(tree, global_config, x):
-            organizer = su.StateOrganizer(tree, global_config)
+            organizer.set_forward(outer_apply)
+        
+        @su.organized_apply
+        def outer_apply(organizer, x):
+            # organizer = su.StateOrganizer(tree, global_config)
             y = x + organizer.bar
             y = organizer.submodule(y)
             y = organizer.submodule.foo + y
 
-            return organizer.get_state(), y
+            return y
 
         tree, global_config = outer()
 
@@ -358,7 +362,11 @@ class TestStructureUtils(unittest.TestCase):
 
         state, y = apply(state, x)
 
+        state, y2 = apply(state, x)
+
         assert jnp.allclose(y, jnp.array([2, 4, 6, 8, 10]))
+
+        assert jnp.allclose(y2, jnp.array([6, 8, 10, 12, 14]))
 
 
 

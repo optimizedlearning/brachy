@@ -275,6 +275,29 @@ def create_tree_from_func(func):
 
     return fill_tree({'apply': wrapped_func})
 
+
+def organized_init(init_func):
+        
+    def decorated(*args, **kwargs):
+        organizer = StateOrganizer()
+        init_func(organizer, *args, **kwargs)
+        return organizer.create_module()
+    return decorated
+        
+    
+
+
+def organized_apply(apply_func):
+    def decorated(tree, global_config, *args, **kwargs):
+        
+        organizer = StateOrganizer(tree, global_config)
+        output = apply_func(organizer, *args, **kwargs)
+
+        return organizer.get_state(), output
+    
+    return decorated
+        
+
 class StateOrganizer:
 
     def __init__(
@@ -305,6 +328,12 @@ class StateOrganizer:
         if apply is not None:
             self._state['apply'] = apply
         return self.get_state(), self.get_global_config()
+
+    def set_apply(self, apply=None):
+        if apply is not None:
+            self._state['apply'] = apply
+    def set_forward(self, apply=None):
+        return self.set_apply(apply)
 
     def get_state(self):
         return self._state
