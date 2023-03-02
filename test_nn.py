@@ -634,6 +634,8 @@ class TestNN(unittest.TestCase):
         tree, global_config = NextModule(5, 10, 20, 2, 10, 20, rng=rng)
         init_state, apply = su.bind_module(tree, global_config)
 
+        apply = jax.jit(apply)
+
         t_module = T_NextModule(5, 10, 20, 2, 10, 20)
 
         state = get_nested_state(t_module)

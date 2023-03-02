@@ -1,6 +1,14 @@
 # HAX
 ## A "simple" neural network library on top of JAX.
 
+BU SCC setup instructions:
+```
+module load python3 pytorch tensorflow cuda/11.2 cudnn/8.1.1
+# (set up/activate virtual env - python -m venv path_to_env; source path_to_env/bin/activate)
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
 
 HAX tries to keep your code as close to the functional spirit of JAX as possible
 while also facilitating easy portability from pytorch.

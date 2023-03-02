@@ -159,9 +159,9 @@ def Sequential(*submodules, rng=None):
         
     '''
 
-
     if len(submodules) == 0:
-        raise ValueError(f"You must provide a non-empty list to Sequential!")
+        return Identity()
+        # raise ValueError(f"You must provide a non-empty list to Sequential!")
     
 
     tree = su.empty_tree()
@@ -253,7 +253,7 @@ def Conv2d(
 
     tree = su.fill_tree({
         'params': {},
-        'buffers': {
+        'aux': {
             'padding': padding,
             'stride': stride,
             'dilation': dilation,
@@ -303,15 +303,16 @@ def Conv2d_apply(tree, global_config, x):
             The size of the shape dimensions Hout, Wout 
             will depend on potential padding of the convolution operation.
     '''
-    
     weight = tree['params']['weight']
 
-    buffers = SimpleNamespace(**tree['buffers'])
+    buffers = SimpleNamespace(**tree['aux'])
     
 
     
 
-
+    # print("buffers: ",buffers)
+    # print("x shape: ",x.shape)
+    # print("weight shape:" ,weight.shape)
     conv = jax.lax.conv_general_dilated(
         x,
         weight,
@@ -326,6 +327,9 @@ def Conv2d_apply(tree, global_config, x):
         preferred_element_type=None)
 
 
+
+# buffers:  namespace(dilation=(1, 1), feature_group_count=1, padding=((1, 1), (1, 1)), stride=(1, 1))
+# x shape:  (128, 3, 32, 32)
 
     if 'bias' in tree['params']:
         bias = tree['params']['bias']
@@ -523,7 +527,6 @@ def CausalSelfAttention_apply(tree, global_config, x):
 
     return module.get_state_update(), module.MHA(x, x, x, causal_mask)
 
-
 def BatchNorm(num_features, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True, axis=None, batch_axis=None):
     organizer = su.StateOrganizer(global_config={'train_mode': True, 'batch_axis': batch_axis})
 
@@ -633,3 +636,6 @@ def BatchNorm_apply(tree, global_config, x):
 
     return organizer.get_state(), y
 
+
+def BatchNorm2d(num_features, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True, axis=None, batch_axis=None):
+    return BatchNorm(num_features, eps, momentum, affine, track_running_stats, axis, batch_axis)
