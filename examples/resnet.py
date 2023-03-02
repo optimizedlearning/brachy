@@ -1,5 +1,5 @@
-# resnet implementation from
-# https://github.com/kuangliu/pytorch-cifar
+# resnet implementation adapted from pytorch implementation in
+# https://github.com/kuangliu/pytorch-cifar/blob/master/models/resnet.py
 
 import sys
 # I'll fix this later once I actually understand the python import system...
@@ -10,11 +10,10 @@ import nn
 from nn import functional as F
 
 
-
 def BasicBlock(expansion, in_planes, planes, stride=1):
     organizer = StateOrganizer()
 
-    organizer.register_constant('expansion', expansion)
+    organizer.register_buffer('expansion', expansion)
 
     organizer.conv1 = nn.Conv2d(
         in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
@@ -47,7 +46,7 @@ def BasicBlock_apply(tree, global_config, x):
 
 def Bottleneck(expansion, in_planes, planes, stride=1):
     organizer = StateOrganizer()
-    organizer.register_constant('expansion', expansion)
+    organizer.register_buffer('expansion', expansion)
 
     organizer.conv1 = nn.Conv2d(in_planes, planes, kernel_size=1, bias=False)
     organizer.bn1 = nn.BatchNorm2d(planes)
@@ -85,7 +84,7 @@ def ResNet(block, expansion, num_blocks, num_classes=10):
 
 
     organizer = StateOrganizer()
-    organizer.register_constant('in_planes', 64)
+    organizer.register_buffer('in_planes', 64)
 
     def _make_layer(block, expansion, planes, num_blocks, stride):
         strides = [stride] + [1]*(num_blocks-1)
