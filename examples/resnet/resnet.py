@@ -6,8 +6,8 @@ import sys
 sys.path.append('..')
 sys.path.append('.')
 
-from structure_utils import StateOrganizer
-import structure_utils as su
+from structure_util import StateOrganizer
+import structure_util as su
 
 import jax
 from jax import numpy as jnp

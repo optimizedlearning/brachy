@@ -1,6 +1,6 @@
 '''
 This file contains code for manipulating structure trees.
-A structure tree is simply a dictionary containing keys:
+A structure tree is a dictionary containing keys:
 
 params
 buffers
@@ -22,6 +22,9 @@ from jax.tree_util import Partial, tree_map
 
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from typing import overload, Any, Callable, Literal, Optional, Sequence, Tuple, Union
+
+import rng_util
+
 
 StructureTree = dict
 PyTree = Any
@@ -284,12 +287,16 @@ def organized_init(init_func):
         
     def decorated(*args, **kwargs):
         organizer = StateOrganizer()
-        init_func(organizer, *args, **kwargs)
+        if 'rng' in kwargs:
+            if kwargs['rng'] is None:
+                kwargs['rng'] = rng_util.split()
+            with rng_util.RNGState(kwargs['rng']):
+                init_func(organizer, *args, **kwargs)
+        else:
+            init_func(organizer, *args, **kwargs)
         return organizer.create_module()
     return decorated
         
-    
-
 
 def organized_apply(apply_func):
     def decorated(tree, global_config, *args, **kwargs):

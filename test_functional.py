@@ -12,7 +12,6 @@ import torch
 
 import unittest
 
-import structure_utils as su
 import functional as F
 
 

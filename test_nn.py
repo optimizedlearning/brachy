@@ -12,7 +12,7 @@ import torch
 
 import unittest
 
-import structure_utils as su
+import structure_util as su
 
 
 def allclose(a, b):

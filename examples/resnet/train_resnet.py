@@ -20,7 +20,6 @@ import argparse
 
 from resnet import *
 from structure_utils import StateOrganizer, bind_module, unbind_module, split_tree, merge_trees
-# from utils import progress_bar
 from tqdm import tqdm
 import jax
 from jax import numpy as jnp

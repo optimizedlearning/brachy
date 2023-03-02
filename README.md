@@ -26,7 +26,7 @@ However, this is not really necessary: model architectures are usually relativel
 problems by providing utilities to directly compute with architectures described in a tree form. 
 
 A Hax module is a pair consisting of a "structure tree" and a "global config". Both of these are python dictionaries. The global config should probably be even a
-a simple JSON object of config values (e.g. {'training_mode': True}). The structure tree is a tree that contains both model weights and functions describing how to 
+a JSON object of config values (e.g. {'training_mode': True}). The structure tree is a tree that contains both model weights and functions describing how to 
 apply these weights. We *could* have tried to organize the structure tree as a python class. However, we wanted to make the structure trees as hackable as possible. Wrapping them in some complicated class mechanism in order to provide some ease of use in common cases might make this more difficult. That said, Hax does still provide a class `StateOrganizer` that can be used to convert a structure tree into a class that behaves very similarly to a pytorch module, which is useful for building structure trees.
 
 Formally, a Hax structure tree `S` is a `dict` whose keys are  `"params"`, `"buffers"`, `"aux"`, `"apply"`, and `"submodules"`.
@@ -84,7 +84,8 @@ def dropout_apply(S: Hax.structure_tree, global_config: dict, x: Array) -> Array
 ```
 Note that it is strongly advised NOT to change the `"apply"` or `"aux"` values of the input `S` inside these apply functions as this will cause
 very weird behavior when jitting. Instead, these values are meant to be edited as part of an overall surgery on the model architecture. Several helper
-functions provided by Hax (e.g. `bind_module`) explicitly enforce this behavior if they are used.
+functions provided by Hax (e.g. `bind_module`) explicitly enforce this behavior if they are used. In fact, the return value from
+an  apply function need not even have the  keys `"apply"` and `"aux"`.
 
 
 

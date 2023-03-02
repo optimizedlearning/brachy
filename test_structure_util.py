@@ -13,7 +13,7 @@ import einops
 import pprint
 import torch
 
-import structure_utils as su
+import structure_util as su
 
 
 import unittest

@@ -22,7 +22,7 @@ from typing import overload, Any, Callable, Literal, Optional, Sequence, Tuple, 
 
 import functools
 
-import structure_utils as su
+import structure_util as su
 
 def Identity():
 
