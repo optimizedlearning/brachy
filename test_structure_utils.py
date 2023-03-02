@@ -367,11 +367,6 @@ class TestStructureUtils(unittest.TestCase):
         assert jnp.allclose(y, jnp.array([2, 4, 6, 8, 10]))
 
         assert jnp.allclose(y2, jnp.array([6, 8, 10, 12, 14]))
-
-
-
-
-
         
 
 
@@ -391,11 +386,7 @@ class TestStructureUtils(unittest.TestCase):
         assert same_trees(tree, new_tree, keys_to_exclude=['apply'])
 
 
-
-
-
-
-    def test_empy_tree(self):
+    def test_empty_tree(self):
         emptied_tree_ref = {
             'params': {},
             'buffers': {},

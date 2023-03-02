@@ -77,19 +77,6 @@ def bind_module(tree: StructureTree, global_config: dict) -> [dict, Callable[[An
 
 
     return init_params, bind_global_config(aux_and_apply, global_config)
-    # def bound(params: PyTree, *args, **kwargs) -> [PyTree, PyTree, PyTree]:
-    #     merged = merge_trees(params, aux_and_apply)
-    #     next_tree, output = apply_tree(merged, global_config, *args, **kwargs)
-    #     next_params = filter_keys(next_tree)
-    #     return next_params, output
-
-
-
-    # bound.aux_and_apply = aux_and_apply
-    # bound.rebind_global_config = rebind_global_config
-
-    # return init_params, bound
-
 
 def unbind_module(tree, bound):
     return merge_trees(tree, bound.aux_and_apply)
@@ -125,37 +112,60 @@ def children(tree):
 
 def is_leaf(tree):
     return tree[CHILD_KEY] == {} # not in tree or tree[CHILD_KEY] in [{}, []] # just stop supporting this nonsense...
+
+# probably there is a "correct" way to do this, but I don't know the syntax 
+def tupleize(x):
+    if isinstance(x, tuple):
+        return x
+    else:
+        return (x,)
+
+def structure_tree_map(func, *trees, path=None):
+    if path is None:
+        path = []
+    # mapped_tree = {}
+    mapped_tree = func(*trees, path=path)
+
     
-
-def structure_tree_map(func, tree, initial_path=[]):
-    mapped_tree = {}
-    mapped_tree = func(tree, initial_path)
-
-    if CHILD_KEY not in mapped_tree:
+    # Tricky: we need to overwrite mapped_tree[CHILD_KEY] even if it is already {} since
+    # there might be some pointer snafus otherwise.
+    # mapped_tree = tu
+    if isinstance(mapped_tree, tuple):
+        for m in mapped_tree:
+            assert CHILD_KEY not in m or is_leaf(m), "tree_map func must return leaf nodes!"
+            m[CHILD_KEY] = {}
+    else:
+        assert CHILD_KEY not in mapped_tree or is_leaf(mapped_tree), "tree_map func must return leaf nodes!"
         mapped_tree[CHILD_KEY] = {}
 
-    assert is_structure_tree(mapped_tree), "mapping function in tree_map did not return a valid structure tree!"
+    all_children = {}
+    for tree in trees:
+        for key, child in tree[CHILD_KEY].items():
+            if key not in all_children:
+                all_children[key] = []
+            all_children[key].append(child)
 
-    if not is_leaf(tree):
-        assert is_leaf(mapped_tree), "tree_map func must return leaf nodes!"
-        children = tree[CHILD_KEY]
-        mapped_tree[CHILD_KEY] = {key: structure_tree_map(func, child, initial_path+[key]) for key, child in children.items()}
+    for key, children in all_children.items():
+        mapped_child = structure_tree_map(func, *children, path=path+[key])
+        if isinstance(mapped_tree, tuple):
+            for i in range(len(mapped_tree)):
+                mapped_tree[i][CHILD_KEY][key] = mapped_child[i]
+        else:
+            mapped_tree[CHILD_KEY][key] = mapped_child
         
     return mapped_tree
 
 def filter_keys(tree, *keys):
     if len(keys) == 0:
         keys = ['params', 'buffers']
-    base = {
-        key: tree[key] for key in keys
-        }
-    children = tree[CHILD_KEY]
 
-    base[CHILD_KEY] = {
-        name: filter_keys(child, *keys) for name, child in children.items()
-        }
 
-    return base
+    def filter_func(node, path):
+        return {
+            key: node[key] for key in keys
+        }
+    return structure_tree_map(filter_func, tree)
+
 
 
 def get_children(tree):
@@ -183,50 +193,43 @@ def empty_tree(tree=None):
     if tree is None:
         return empty
 
-    return structure_tree_map(lambda t, p: {k:v for k, v in empty.items()}, tree)
+    return structure_tree_map(lambda t, path=None: {k:v for k, v in empty.items()}, tree)
 
 def merge_trees(*trees, keys_to_merge=NON_CHILD_KEYS, keys_to_override=NON_CHILD_KEYS):
-    merged = {}
 
     if len(trees) == 0:
         return merged
 
-    non_leaves  = []
-    for tree in trees:
-        if not is_leaf(tree):
-            non_leaves.append(tree[CHILD_KEY])
-        for key in tree:
-            if key == CHILD_KEY:
-                continue
-            if key not in keys_to_merge:
-                continue
-            if key not in keys_to_override and key in merged:
-                continue
-            if key == 'apply':
-                merged[key] = tree[key]
-                continue
-            if key not in merged:
-                merged[key] = {}
-            merged[key].update(tree[key])
+    def merge_func(*trees, path=None):
+        merged  = {}
+        for tree in trees:
+            for key in tree:
+                if key == CHILD_KEY:
+                    continue
+                if key not in keys_to_merge:
+                    continue
+                if key not in keys_to_override and key in merged:
+                    continue
+                if key == 'apply':
+                    merged[key] = tree[key]
+                    continue
+                if key not in merged:
+                    merged[key] = {}
+                merged[key].update(tree[key])
+        return merged
 
-    if len(non_leaves) != 0:
-        children_names = set(non_leaves[0].keys())
-        for nl in non_leaves[1:]:
-            assert children_names == set(nl.keys()), "trees to merge have differing structures!"
-
-
-        merged[CHILD_KEY] = {
-            k: merge_trees(*[n[k] for n in non_leaves], keys_to_merge=keys_to_merge, keys_to_override=keys_to_override) for k in children_names
-        }
-    else:
-        merged[CHILD_KEY] = {}
-
-    return merged
+    return structure_tree_map(merge_func, *trees)
 
 
 def split_tree(tree, key_sets=NON_CHILD_KEYS):
     key_sets = [[s] if isinstance(s, str) else s for s in key_sets]
-    return [filter_keys(tree, *s) for s in key_sets]
+
+    def split_func(node, path=None):
+        return tuple({key: node[key] for key in s} for s in key_sets)
+
+    return structure_tree_map(split_func, tree)
+
+    # return [filter_keys(tree, *s) for s in key_sets]
 
 def split_params(tree):
     other_keys = [_ for  _ in NON_CHILD_KEYS]
@@ -346,6 +349,7 @@ class StateOrganizer:
         self.update_global_config('train_mode', mode)
 
     def get_global_config(self, key=None):
+        
         global_config = {}
         for submodule, config in self._submodule_global_configs.items():
             global_config.update(config)
@@ -388,7 +392,7 @@ class StateOrganizer:
     
     def __call__(self, *args, **kwargs):
         state = self._state
-        global_config = self.get_global_config
+        global_config = self.get_global_config()
         next_state, output = state['apply'](state, global_config, *args, **kwargs)
 
         # Tricky: we must change the keys of self._state directly: we cannot simply reassign state
