@@ -20,10 +20,13 @@ import argparse
 
 from resnet import *
 from structure_utils import StateOrganizer, bind_module, unbind_module, split_tree, merge_trees
-from utils import progress_bar
+# from utils import progress_bar
+from tqdm import tqdm
 import jax
 from jax import numpy as jnp
 from jax.tree_util import tree_map, Partial
+
+import wandb
 
 
 
@@ -155,7 +158,10 @@ def train(epoch, state, sgd_state):
     train_loss = 0
     correct = 0
     total = 0
-    for batch_idx, (inputs, targets) in enumerate(trainloader):
+    total_loss = 0
+    batches = 0
+    pbar  = tqdm(enumerate(trainloader))
+    for batch_idx, (inputs, targets) in pbar:
         inputs, targets = inputs.detach_().numpy(), targets.detach_().numpy()
 
         state, sgd_state, cross_entropy, batch_correct = train_step_jit(state, sgd_state, inputs, targets, epoch)
@@ -167,11 +173,19 @@ def train(epoch, state, sgd_state):
         # optimizer.step()
 
         total += targets.shape[0]
+        batches += 1
+        total_loss += cross_entropy
         correct += batch_correct
         
 
-        progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-                     % (cross_entropy/(batch_idx+1), 100.*correct/total, correct, total))
+        pbar.set_description('Batch: %d/%d, Loss: %.3f | Acc: %.3f%% (%d/%d)'
+                     % (batch_idx, len(trainloader), total_loss/(batch_idx+1), 100.*correct/total, correct, total))
+
+    wandb.log({
+        'train/accuracy': correct/total,
+        'epoch': epoch,
+        'train/loss': total_loss/batches
+    })
 
     return state, sgd_state
 
@@ -181,16 +195,34 @@ def test(epoch, state):
     test_loss = 0
     correct = 0
     total = 0
-    with torch.no_grad():
-        for batch_idx, (inputs, targets) in enumerate(testloader):
-            inputs, targets = inputs.detach_().numpy(), targets.detach_().numpy()
-            test_loss, batch_correct = test_step_jit(state, inputs, targets)
+    total_loss = 0
 
-            total += targets.shape[0]
-            correct += batch_correct
+    batches = 0
+    pbar = tqdm(enumerate(testloader))
+    for batch_idx, (inputs, targets) in pbar:
+        inputs, targets = inputs.detach_().numpy(), targets.detach_().numpy()
+        test_loss, batch_correct = test_step_jit(state, inputs, targets)
 
-            progress_bar(batch_idx, len(testloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-                         % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
+        total_loss += test_loss
+        batches += 1
+
+        total += targets.shape[0]
+        correct += batch_correct
+
+        pbar.set_description('Batch: %d/%d Loss: %.3f | Acc: %.3f%% (%d/%d)'
+                        % (batch_idx, len(testloader), total_loss/(batch_idx+1), 100.*correct/total, correct, total))
+        if batch_idx % 20 == 0:
+            wandb.log({
+                'test/accuracy': correct/total,
+                'epoch': epoch,
+                'test/loss': total_loss/batches
+            })
+    wandb.log({
+        'test/accuracy': correct/total,
+        'epoch': epoch,
+        'test/loss': total_loss/batches
+    })
+
 
     # # Save checkpoint.
     # acc = 100.*correct/total
@@ -236,6 +268,7 @@ test_step_partial = Partial(
 train_step_jit = jax.jit(train_step_partial)
 test_step_jit = jax.jit(test_step_partial)
 
+wandb.init(project="jax_resnet")
 for epoch in range(start_epoch, start_epoch+200):
     state, sgd_state = train(epoch, state, sgd_state)
     test(epoch, state)

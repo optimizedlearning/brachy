@@ -4,7 +4,7 @@
 BU SCC setup instructions:
 ```
 module load python3 pytorch tensorflow cuda/11.2 cudnn/8.1.1
-# (set up/activate virtual env - python -m venv path_to_env; source path_to_env/bin/activate)
+# (set up/activate virtual env e.g. python -m venv gpujaxenv; source gpujaxenv/bin/activate)
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
@@ -27,12 +27,12 @@ problems by providing utilities to directly compute with architectures described
 
 A Hax module is a pair consisting of a "structure tree" and a "global config". Both of these are simple python dictionaries. The global config should probably be even a
 a simple JSON object of config values (e.g. {'training_mode': True}). The structure tree is a tree that contains both model weights and functions describing how to 
-apply these weights. We *could* have tried to organize the structure tree as a python class. However, we wanted to make the structure trees as hackable as possible. Wrapping them in some complicated class mechanism in order to provide some ease of use in common cases might make this more difficult. That said, Hax does still provide a class `StateOrganizer` that can be used to convert a structure tree into a class that behaves very similarly to a pytorch module.
+apply these weights. We *could* have tried to organize the structure tree as a python class. However, we wanted to make the structure trees as hackable as possible. Wrapping them in some complicated class mechanism in order to provide some ease of use in common cases might make this more difficult. That said, Hax does still provide a class `StateOrganizer` that can be used to convert a structure tree into a class that behaves very similarly to a pytorch module, which is useful for building structure trees.
 
-Formally, a Hax structure tree `S` is a `dict` whose keys are  `"params"`, `"constants"`, `"aux"`, `"apply"`, and `"submodules"`.
+Formally, a Hax structure tree `S` is a `dict` whose keys are  `"params"`, `"buffers"`, `"aux"`, `"apply"`, and `"submodules"`.
 The value `S["submodules"]` is either a dict whose values are themselves structure trees (i.e. `S["submodules"]` specified the children of `S` 
 in the tree).
-The values `S["params"]` and `S["constants"]` are both dicts whose values are *JAX types*. By a JAX type, we mean a value that is a valid argument
+The values `S["params"]` and `S["buffers"]` are both dicts whose values are *JAX types*. By a JAX type, we mean a value that is a valid argument
 to a traced JAX functions (e.g. a pytree where all leaves are JAX arrays). That is, the function:
 ```
 @jax.jit
