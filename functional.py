@@ -41,6 +41,37 @@ def softmax(x: Array,
     unnormalized = jnp.where(where, unnormalized, 0.0)
   return unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
 
+def accuracy(scores, target, weight=None, ignore_index=-100, axis=None):
+    if axis is None:
+        if scores.ndim == 1:
+            axis = 0
+        else:
+            axis = 1
+
+    C = scores.shape[axis]
+
+
+    predictions = jnp.argmax(scores, axis=axis)
+    correct = predictions == target
+
+    no_ignore = target!=ignore_index
+    if weight is None:
+        return jnp.mean(correct, where=no_ignore)
+    if weight is not None:
+        weight_shape = (1,) * (axis - 1) + (C,) + (1,) * (scores.ndim - axis-1)
+        weight = weight.reshape(weight_shape)
+
+        weight = jnp.take_along_axis(weight, target, axis=axis-1)
+
+        correct = correct * weight
+
+        weight_total = jnp.sum(weight, where=no_ignore, initial=0.0)
+        return jnp.sum(correct, where=no_ignore, initial=0.0)/weight_total
+
+
+
+
+
 
 def softmax_cross_entropy(input, target, weight=None, ignore_index=-100, reduction='mean', label_smoothing=0.0, axis=None):
     """Computes softmax cross entropy between sets of logits and integer labels.
@@ -68,8 +99,6 @@ def softmax_cross_entropy(input, target, weight=None, ignore_index=-100, reducti
         else:
             axis = 1
 
-    # # let's transpose to make the logits in the last axis:
-    # input = input.transpose(axis, -1)
 
     C = input.shape[axis]
     

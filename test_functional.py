@@ -22,6 +22,22 @@ def t_to_np(tensor):
 
 class TestFunctional(unittest.TestCase):
 
+
+    def test_accuracy(self):
+        x = jnp.array([[1.0, 4.2, 3.4], [0.2,12,1.0], [-2,100,-2]], dtype=float)
+        labels = jnp.array([0,1, -100], dtype=int)
+
+
+        weights = jnp.array([1,2,3])
+
+        y = F.accuracy(x, labels)
+
+        assert(jnp.allclose(0.5, y))
+
+        y = F.accuracy(x, labels, weight=weights)
+
+        assert(jnp.allclose(2.0/3.0, y))
+
     def test_softmax_cross_entropy(self):
         x = jnp.array([[1.0, 4.2, 3.4], [0.2,-12,1.0], [-2,100,-2]], dtype=float)
         labels = jnp.array([0,1, -100], dtype=int)

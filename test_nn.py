@@ -86,7 +86,7 @@ def MyModule(vocab, embed, dim1, dim2, dim3=1, rng=None):
         r = rng_util.split(1)
 
         mul = 1 + jax.random.normal(r, (dim2,))
-        organizer.register_constant('mul', mul)
+        organizer.register_buffer('mul', mul)
 
         organizer.fc2 = nn.Linear(dim2, dim3)
 
@@ -187,12 +187,12 @@ def get_nested_state(t_module):
 
     state = {
         'params': {},
-        'constants': {},
+        'buffers': {},
         'submodules': {},
     }
 
     params = state['params']
-    constants = state['constants']
+    buffers = state['buffers']
     submodules = state['submodules']
 
     params['next_bias'] = t_to_np(t_module.next_bias)
@@ -202,21 +202,21 @@ def get_nested_state(t_module):
             'weight': t_to_np(t_module.head.weight),
             'bias': t_to_np(t_module.head.bias)
         },
-        'constants': {},
+        'buffers': {},
         'submodules': {}
     }
 
     trunk = t_module.trunk
     submodules['trunk'] = {
         'params': {},
-        'constants': {},
+        'buffers': {},
         'submodules': {}
     }
     submodules['trunk']['submodules']['embed'] = {
         'params': {
             'weight': t_to_np(trunk.embed.weight)
         },
-        'constants': {},
+        'buffers': {},
         'submodules': {}
     }
 
@@ -225,13 +225,13 @@ def get_nested_state(t_module):
             'weight': t_to_np(trunk.fc2.weight),
             'bias': t_to_np(trunk.fc2.bias)
         },
-        'constants': {},
+        'buffers': {},
         'submodules': {}
     }
 
     submodules['trunk']['submodules']['seq'] = {
         'params': {},
-        'constants': {},
+        'buffers': {},
         'submodules': {}
     }
     submodules['trunk']['submodules']['seq']['submodules'] = {
@@ -240,12 +240,12 @@ def get_nested_state(t_module):
                 'weight': t_to_np(s.weight),
                 'bias': t_to_np(s.bias)
             },
-            'constants': {},
+            'buffers': {},
             'submodules': {}
         } for i, s in enumerate(trunk.seq)
     }
 
-    submodules['trunk']['constants']['mul'] = t_to_np(trunk.mul)
+    submodules['trunk']['buffers']['mul'] = t_to_np(trunk.mul)
     
     return state
 
@@ -401,7 +401,7 @@ class TestNN(unittest.TestCase):
         t_module = torch.nn.Linear(3, 2, bias=True)
         state = get_t_state(t_module)
 
-        tree = su.merge_trees(tree, state, keys_to_override=['params', 'constants'])
+        tree = su.merge_trees(tree, state, keys_to_override=['params', 'buffers'])
         apply = tree['apply']
 
         x = jnp.array([[1,2,3],[5,6,6],[7,8,9]], dtype=jnp.float32)
@@ -424,7 +424,7 @@ class TestNN(unittest.TestCase):
                 'params': {
                     'weight': t_to_np(t_module.weight)
                 },
-                'constants': {}
+                'buffers': {}
             })
 
         module_gen = lambda r: nn.Embedding(500, 1000, rng=r)
@@ -435,7 +435,7 @@ class TestNN(unittest.TestCase):
         t_module = torch.nn.Embedding(30, 10)
         state = get_t_state(t_module)
 
-        tree = su.merge_trees(tree, state, keys_to_override=['params', 'constants'])
+        tree = su.merge_trees(tree, state, keys_to_override=['params', 'buffers'])
 
         apply = tree['apply']
 
@@ -460,7 +460,7 @@ class TestNN(unittest.TestCase):
                 })
             state = {
                 'params': params,
-                'constants': {}
+                'buffers': {}
             }
             return state
 
@@ -512,7 +512,7 @@ class TestNN(unittest.TestCase):
         ])
         state = get_t_state_for_apply_test(t_module)
 
-        tree = su.merge_trees(tree, state, keys_to_override=['params', 'constants'])
+        tree = su.merge_trees(tree, state, keys_to_override=['params', 'buffers'])
 
         apply = tree['apply']
 
@@ -538,7 +538,7 @@ class TestNN(unittest.TestCase):
                     'weight': t_to_np(t_module.weight),
                     'bias': t_to_np(t_module.bias)
                 },
-                'constants': {
+                'buffers': {
                     'eps': 1e-5
                 }
             })
@@ -552,7 +552,7 @@ class TestNN(unittest.TestCase):
         t_module = torch.nn.LayerNorm(3)
         state = get_t_state(t_module)
 
-        tree = su.merge_trees(tree, state, keys_to_override=['params', 'constants'])
+        tree = su.merge_trees(tree, state, keys_to_override=['params', 'buffers'])
 
         apply = tree['apply']
 
@@ -578,7 +578,7 @@ class TestNN(unittest.TestCase):
                     'weight': t_to_np(t_module.weight),
                     'bias': t_to_np(t_module.bias)
                 },
-                'constants': {
+                'buffers': {
                     'padding': t_module.padding,
                     'stride': t_module.stride,
                     'dilation': t_module.dilation,
@@ -595,7 +595,7 @@ class TestNN(unittest.TestCase):
         t_module = torch.nn.Conv2d(3, 4, 5, padding='same', bias=True)
         state = get_t_state(t_module)
 
-        tree = su.merge_trees(tree, state, keys_to_override=['params', 'constants'])
+        tree = su.merge_trees(tree, state, keys_to_override=['params', 'buffers'])
 
         apply = tree['apply']
 
@@ -655,6 +655,7 @@ class TestNN(unittest.TestCase):
         rng = jax.random.PRNGKey(0)
 
         tree, global_config = nn.Dropout(0.25, rng)
+        tree['apply'] = jax.tree_util.Partial(tree['apply'])
         apply = tree['apply']
 
 
@@ -683,7 +684,7 @@ class TestNN(unittest.TestCase):
         assert tree_close(mean_dropout, x, tol=0.05), f"not close: {mean_dropout}, {x}"
 
         
-        tree, no_train_dropout = apply(tree, {'train_mode': False}, x)
+        tree, no_train_dropout = apply(tree, {'train_mode': False, 'batch_axis': None}, x)
 
         assert tree_close(no_train_dropout, x, tol=1e-5), f"dropout still applied when in eval mode"
 
@@ -691,6 +692,11 @@ class TestNN(unittest.TestCase):
         x = jnp.ones(10000)
 
         tree, drop = apply(tree, global_config, x)
+
+        assert jnp.allclose(jnp.mean(drop), 1.0, atol=0.01), f"dropout on large array failed! mean {jnp.mean(drop)}, drop: {drop}"
+
+        to_vmap_apply = jax.tree_util.Partial(apply, tree, {'train_mode': True, 'batch_axis': 'batch'})
+        tree, drop = jax.vmap(to_vmap_apply, in_axes=0, out_axes=(None, 0), axis_name='batch')(x)
 
         assert jnp.allclose(jnp.mean(drop), 1.0, atol=0.01), f"dropout on large array failed! mean {jnp.mean(drop)}, drop: {drop}"
 

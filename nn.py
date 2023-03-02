@@ -66,7 +66,7 @@ def Linear(in_features, out_features, bias=True, dtype=None, rng=None):
 
     tree = {
         'params': params,
-        'constants': {},
+        'buffers': {},
         'aux': {},
         'apply': Linear_apply,
         'submodules': {}
@@ -97,9 +97,9 @@ def Linear_apply(tree, global_config, x):
         bias = params['bias']
         r = r + bias
 
-    # technically only the 'params' and 'constants' keys in the returned
+    # technically only the 'params' and 'buffers' keys in the returned
     # tree (and its submodules) are important. The others will be ignored.
-    # So, we could instead return the value su.filter_keys(tree, ['params', 'constants']).
+    # So, we could instead return the value su.filter_keys(tree, ['params', 'buffers']).
     # But that is more writing.
     return tree, r
 
@@ -196,7 +196,7 @@ def LayerNorm(normalized_shape, eps=1e-05, rng=None):
 
     organizer.bias = jnp.zeros(normalized_shape)
 
-    organizer.register_constant('eps', eps)
+    organizer.register_buffer('eps', eps)
 
     return organizer.create_module(Layernorm_apply)
 
@@ -253,7 +253,7 @@ def Conv2d(
 
     tree = su.fill_tree({
         'params': {},
-        'constants': {
+        'buffers': {
             'padding': padding,
             'stride': stride,
             'dilation': dilation,
@@ -306,7 +306,7 @@ def Conv2d_apply(tree, global_config, x):
     
     weight = tree['params']['weight']
 
-    constants = SimpleNamespace(**tree['constants'])
+    buffers = SimpleNamespace(**tree['buffers'])
     
 
     
@@ -315,12 +315,12 @@ def Conv2d_apply(tree, global_config, x):
     conv = jax.lax.conv_general_dilated(
         x,
         weight,
-        window_strides=constants.stride,
-        padding=constants.padding,
+        window_strides=buffers.stride,
+        padding=buffers.padding,
         lhs_dilation=None,
-        rhs_dilation=constants.dilation,
+        rhs_dilation=buffers.dilation,
         dimension_numbers=('NCHW', 'OIHW', 'NCHW'),
-        feature_group_count=constants.feature_group_count,
+        feature_group_count=buffers.feature_group_count,
         batch_group_count=1,
         precision=None,
         preferred_element_type=None)
@@ -341,14 +341,15 @@ def Dropout(prob_zero=0.5, rng=None):
 
     tree = su.fill_tree({
         'params': {},
-        'constants': {
+        'buffers': {
             'rng': rng,
             'prob_zero': prob_zero
         },
         'apply': Dropout_apply,
     })
     global_config = {
-        'train_mode': True
+        'train_mode': True,
+        'batch_axis': None,
     }
     return tree, global_config
 
@@ -360,10 +361,13 @@ def Dropout_apply(tree, global_config, x):
     if not global_config['train_mode']:
         return tree, x
 
+    batch_axis = batch_axis = global_config.get('batch_axis', None)
+
     next_tree = su.copy_dict(tree)
 
-    rng = next_tree['constants']['rng']
-    prob_zero = next_tree['constants']['prob_zero']
+    rng = next_tree['buffers']['rng']
+
+    prob_zero = next_tree['buffers']['prob_zero']
 
     prob_one = 1.0 - prob_zero
 
@@ -371,11 +375,17 @@ def Dropout_apply(tree, global_config, x):
 
     rng, *subkeys = jax.random.split(rng, len(x_flat)+1)
 
+    if batch_axis is not None:
+        if isinstance(batch_axis, str):
+            batch_axis = [batch_axis]
+        for ba in batch_axis:
+            subkeys = [jax.random.fold_in(key, jax.lax.axis_index(ba)) for key in subkeys]
+
     dropout_flat = [v * jax.random.bernoulli(k, prob_one, shape=v.shape)/prob_one for v, k in zip(x_flat, subkeys)]
 
     x_dropout = tree_unflatten(treedef, dropout_flat)
 
-    next_tree['constants']['rng'] = rng
+    next_tree['buffers']['rng'] = rng
 
     return next_tree, x_dropout
 
@@ -384,6 +394,7 @@ def Dropout_apply(tree, global_config, x):
 # ok, I wanted this to be the same as torch, but my god their implemention of
 # multihead attention is way over-complicated. So, we opt for readability here
 # instead.
+# TODO: make this actually the  same as torch.nn.MultiheadAttention
 def MultiheadAttention(
     embed_dim,
     num_heads,
@@ -505,7 +516,7 @@ def CausalSelfAttention_apply(tree, global_config, x):
 
     *_, T, C = x.shape
 
-    # should we be storing this as a constant instead? then we'd need to know the
+    # should we be storing this as a buffer instead? then we'd need to know the
     # T ahead of time (although I guess we could fall back to this case if needed... 
     # A conditional will be ok even with jax.jit since it depends on the shape)
     causal_mask = jnp.tri(T, k=0).reshape((1, 1, T, T))
@@ -520,15 +531,15 @@ def BatchNorm(num_features, eps=1e-05, momentum=0.1, affine=True, track_running_
         organizer.register_parameter('scale', jnp.ones(num_features))
         organizer.register_parameter('bias', jnp.zeros(num_features))
 
-    organizer.register_constant('eps', eps)
-    organizer.register_constant('momentum', momentum)
+    organizer.register_buffer('eps', eps)
+    organizer.register_buffer('momentum', momentum)
 
     if momentum is None:
-        organizer.register_constant('num_batches_tracked', 0)
+        organizer.register_buffer('num_batches_tracked', 0)
     
     if track_running_stats:
-        organizer.register_constant('running_mean', jnp.zeros(num_features))
-        organizer.register_constant('running_var', jnp.ones(num_features))
+        organizer.register_buffer('running_mean', jnp.zeros(num_features))
+        organizer.register_buffer('running_var', jnp.ones(num_features))
 
     organizer.register_aux('affine', affine)
     organizer.register_aux('track_running_stats', track_running_stats)
@@ -546,7 +557,7 @@ def BatchNorm_apply(tree, global_config, x):
     #
     organizer = su.StateOrganizer(tree, global_config)
 
-    batch_axis = global_config['batch_axis']
+    batch_axis = global_config.get('batch_axis', None)
 
     axis = organizer.axis
     if axis is None:

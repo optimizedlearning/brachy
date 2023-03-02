@@ -72,24 +72,24 @@ def same_trees(*trees, keys_to_exclude=[]):
 
 def apply(tree, global_config, x, y):
     value = tree['params']['a'] + x -y
-    split = tree.filter_keys(['params', 'constants'])
+    split = tree.filter_keys(['params', 'buffers'])
     return split, value
 
 def apply_child(tree, global_config, x, y):
-    value = 3*tree['params']['f'] + tree['constants']['g'] + x -y
-    split = tree.filter_keys(['params', 'constants'])
+    value = 3*tree['params']['f'] + tree['buffers']['g'] + x -y
+    split = tree.filter_keys(['params', 'buffers'])
     return split, value
 
 def apply_grand_child(tree, global_config, x, y):
-    value = -1*tree['params']['f'] + tree['constants']['g'] + x -y
-    split = tree.filter_keys(['params', 'constants'])
+    value = -1*tree['params']['f'] + tree['buffers']['g'] + x -y
+    split = tree.filter_keys(['params', 'buffers'])
     return split, value
 
 grand_child = {
     'params': {
         'f': jnp.zeros((2,3)),
     },
-    'constants': {
+    'buffers': {
         'g': jnp.array([[33,99,3],[5,6,7]])
     },
     'aux': {
@@ -104,7 +104,7 @@ child = {
     'params': {
         'f': jnp.zeros((1,3)),
     },
-    'constants': {
+    'buffers': {
         'g': jnp.array([[1,99,3],[5,6,7]])
     },
     'aux': {
@@ -121,7 +121,7 @@ tree = {
         'a': jnp.ones(4),
         'b': jnp.zeros((1,2,1)),
     },
-    'constants': {
+    'buffers': {
         'x': jnp.array([[1,2,3],[5,6,7]])
     },
     'aux': {
@@ -157,18 +157,18 @@ params = {
 }
 
 
-constants = {
-    'constants': {
+buffers = {
+    'buffers': {
         'x': jnp.array([[1,2,3],[5,6,7]])
     },
     'submodules': {
         'c': {
-            'constants': {
+            'buffers': {
                 'g': jnp.array([[1,99,3],[5,6,7]])
             },
             'submodules': {
                 'g': {
-                    'constants': {
+                    'buffers': {
                         'g': jnp.array([[33,99,3],[5,6,7]])
                     },
                     'submodules': {}
@@ -215,7 +215,7 @@ def grandchild_module():
     params = {
         'w': jnp.array([1,2,3,4,5])
     }
-    constants = {
+    buffers = {
         'g': jnp.array([-1,-1,-1,-1,3])
     }
     aux = {
@@ -224,7 +224,7 @@ def grandchild_module():
 
     tree = {
         'params': params,
-        'constants': constants,
+        'buffers': buffers,
         'aux': aux,
         'apply': grandchild_apply,
         'submodules': {}
@@ -234,7 +234,7 @@ def grandchild_module():
 
 def grandchild_apply(tree, global_config, x):
     w = tree['params']['w']
-    g = tree['constants']['g']
+    g = tree['buffers']['g']
 
     y = x*w + g
 
@@ -279,7 +279,7 @@ def root_module():
 
     organizer = su.StateOrganizer()
     organizer.update_global_config('test_override', 'root')
-    organizer.register_constant('a', jnp.array([1,1,1,3,3]))
+    organizer.register_buffer('a', jnp.array([1,1,1,3,3]))
 
     for k in range(1,4):
         organizer.register_submodule(k, child_module(k))
@@ -398,19 +398,19 @@ class TestStructureUtils(unittest.TestCase):
     def test_empy_tree(self):
         emptied_tree_ref = {
             'params': {},
-            'constants': {},
+            'buffers': {},
             'aux': {},
             'apply': lambda t, g, x: x,
             'submodules': {
                 'c': {
                     'params': {},
-                    'constants': {},
+                    'buffers': {},
                     'aux': {},
                     'apply': lambda t, g, x: x,
                     'submodules': {
                         'g': {
                             'params': {},
-                            'constants': {},
+                            'buffers': {},
                             'aux': {},
                             'apply': lambda t, g, x: x,
                             'submodules': {},
@@ -428,7 +428,7 @@ class TestStructureUtils(unittest.TestCase):
 
         min_empty_ref = {
             'params': {},
-            'constants': {},
+            'buffers': {},
             'aux': {},
             'apply': lambda t, g, x: x,
             'submodules': {}
@@ -502,35 +502,35 @@ class TestStructureUtils(unittest.TestCase):
 
     def test_split_merge_filter(self):
 
-        s_params, s_constants, s_apply_aux = su.split_tree(tree, ['params', 'constants', ['apply', 'aux']])
+        s_params, s_buffers, s_apply_aux = su.split_tree(tree, ['params', 'buffers', ['apply', 'aux']])
 
-        merged = su.merge_trees(s_params, s_constants, s_apply_aux)
+        merged = su.merge_trees(s_params, s_buffers, s_apply_aux)
 
-        limited_merged = su.merge_trees(s_params, s_constants, s_apply_aux, keys_to_merge=['params', 'constants'])
+        limited_merged = su.merge_trees(s_params, s_buffers, s_apply_aux, keys_to_merge=['params', 'buffers'])
         filtered = su.filter_keys(tree)
 
 
 
         def new_apply(tree, global_config, x, y):
             value = tree['params']['b'] * x / y
-            split = tree.filter_keys(['params', 'constants'])
+            split = tree.filter_keys(['params', 'buffers'])
             return split, value
 
         def new_child_apply(tree, global_config, x, y):
             value = tree['params']['f'] * x / y
-            split = tree.filter_keys(['params', 'constants'])
+            split = tree.filter_keys(['params', 'buffers'])
             return split, value
 
         def new_grand_child_apply(tree, global_config, x, y):
-            value = tree['constants']['g'] * x / y
-            split = tree.filter_keys(['params', 'constants'])
+            value = tree['buffers']['g'] * x / y
+            split = tree.filter_keys(['params', 'buffers'])
             return split, value
 
         
 
 
         self.assertTrue(same_dicts(params, s_params))
-        self.assertTrue(same_dicts(constants, s_constants))
+        self.assertTrue(same_dicts(buffers, s_buffers))
         self.assertTrue(same_dicts(apply_aux, s_apply_aux))
 
         self.assertTrue(same_trees(merged, tree))

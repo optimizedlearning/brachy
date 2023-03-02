@@ -3,7 +3,7 @@ This file contains code for manipulating structure trees.
 A structure tree is simply a dictionary containing keys:
 
 params
-constants
+buffers
 aux
 apply
 submodules
@@ -37,7 +37,7 @@ STATE_ORGANIZER_RESERVED = [
 
 NON_CHILD_KEYS = [
     'params',
-    'constants',
+    'buffers',
     'aux',
     'apply',
 ]
@@ -57,11 +57,12 @@ REQUIRED_KEYS = NON_CHILD_KEYS + [CHILD_KEY]
 def apply_tree(tree: StructureTree, global_config: dict, *args, **kwargs) -> [StructureTree, PyTree]:
     return tree['apply'](tree, global_config, *args, **kwargs)
 
-# def apply(params: PyTree, constants: PyTree, aux: dict, apply: dict, global_config: dict, *args, **kwargs) -> [StructureTree, PyTree]:
-#     tree = merge_trees(params, constants, aux, apply)
+# def apply(params: PyTree, buffers: PyTree, aux: dict, apply: dict, global_config: dict, *args, **kwargs) -> [StructureTree, PyTree]:
+#     tree = merge_trees(params, buffers, aux, apply)
 #     return apply_tree(tree, global_config, *args, **kwargs)
 
 def bind_global_config(aux_and_apply, global_config: dict):
+    organizer = StateOrganizer(aux_and_apply)
     def bound(params: PyTree, *args, **kwargs):
         merged = merge_trees(params, aux_and_apply)
         next_tree, output = apply_tree(merged, global_config, *args, **kwargs)
@@ -144,7 +145,7 @@ def structure_tree_map(func, tree, initial_path=[]):
 
 def filter_keys(tree, *keys):
     if len(keys) == 0:
-        keys = ['params', 'constants']
+        keys = ['params', 'buffers']
     base = {
         key: tree[key] for key in keys
         }
@@ -387,14 +388,15 @@ class StateOrganizer:
     
     def __call__(self, *args, **kwargs):
         state = self._state
-        next_state, output = state['apply'](state, self._global_config, *args, **kwargs)
+        global_config = self.get_global_config
+        next_state, output = state['apply'](state, global_config, *args, **kwargs)
 
         # Tricky: we must change the keys of self._state directly: we cannot simply reassign state
-        # as self._state = merge(self._state, next_state, keys_to_override=['params','constants'])
+        # as self._state = merge(self._state, next_state, keys_to_override=['params','buffers'])
         # because self._state may be pointed to by a parent StateOrganizer and we need these state
         # changes to be propogated up to the parent's ._state
         self._state['params'] = next_state['params']
-        self._state['constants'] = next_state['constants']
+        self._state['buffers'] = next_state['buffers']
 
 
         return output
@@ -403,8 +405,8 @@ class StateOrganizer:
     def register_parameter(self, name, value):
         self._state['params'][name] = value
 
-    def register_constant(self, name, value):
-        self._state['constants'][name] = value
+    def register_buffer(self, name, value):
+        self._state['buffers'][name] = value
 
     def register_aux(self, name, value):
         self._state['aux'][name] = value
@@ -455,7 +457,6 @@ class StateOrganizer:
             # by default we put things in params if they are jittable
             state['params'][name] = value
             return value
-    
+
 
         return super().__setattr__(name, value)
-
