@@ -23,9 +23,9 @@ Second, as models grow in size and complexity, it will likely become more and mo
 components of pre-trained modules in an easy way. Right now, to extract the output of some intermediate layer or to add a new layer somewhere
 in the module computation requires a careful inspection of the source code and often some extra work to transfer pretrained weights to the new architecture.
 However, this is not really necessary: model architectures are usually relatively straightforwardly described as simple trees. Hax exploits this to solve both
-problems by providing utilities to directly compute with architectures described in a simple tree form. 
+problems by providing utilities to directly compute with architectures described in a tree form. 
 
-A Hax module is a pair consisting of a "structure tree" and a "global config". Both of these are simple python dictionaries. The global config should probably be even a
+A Hax module is a pair consisting of a "structure tree" and a "global config". Both of these are python dictionaries. The global config should probably be even a
 a simple JSON object of config values (e.g. {'training_mode': True}). The structure tree is a tree that contains both model weights and functions describing how to 
 apply these weights. We *could* have tried to organize the structure tree as a python class. However, we wanted to make the structure trees as hackable as possible. Wrapping them in some complicated class mechanism in order to provide some ease of use in common cases might make this more difficult. That said, Hax does still provide a class `StateOrganizer` that can be used to convert a structure tree into a class that behaves very similarly to a pytorch module, which is useful for building structure trees.
 
