@@ -81,7 +81,7 @@ def fold_in(data: int) -> None:
     _RNG = jax.random.fold_in(_RNG, data)
 
 
-def __getattr__(name, value):
+def __getattr__(name):
     def wrap(*args, **kwargs):
         rng = split()
         return getattr(jax.random, name)(rng, *args, **kwargs)

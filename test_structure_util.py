@@ -338,9 +338,10 @@ class TestStructureUtils(unittest.TestCase):
             # return organizer.get_state(), y
             return y
 
-        @su.organized_init
-        def outer(organizer):
+        @su.organized_init_with_rng
+        def outer(organizer, rng=None):
             organizer.bar = jnp.ones(5)
+            organizer.register_aux('random', rng_util.uniform(shape=(2,2)))
             organizer.submodule = mutating_state(5)
 
             organizer.set_forward(outer_apply)
@@ -354,7 +355,16 @@ class TestStructureUtils(unittest.TestCase):
 
             return y
 
+        rng_util.init_rng(0)
         tree, global_config = outer()
+
+        rng0 = jax.random.PRNGKey(0)
+
+        _, subkey = jax.random.split(rng0)
+        _, subkey = jax.random.split(subkey)
+
+
+        assert jnp.allclose(tree['aux']['random'], jax.random.uniform(subkey, shape=(2,2)))
 
         state, apply = su.bind_module(tree, global_config)
 

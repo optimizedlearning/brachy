@@ -264,5 +264,5 @@ def avg_pool2d(input, kernel_size, stride=None, padding=0, dilation=1, ceil_mode
 
 
 
-def __getattr__(name, value):
+def __getattr__(name):
     return getattr(jax.nn, name)

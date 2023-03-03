@@ -25,6 +25,8 @@ from typing import overload, Any, Callable, Literal, Optional, Sequence, Tuple, 
 
 import rng_util
 
+import inspect
+
 
 StructureTree = dict
 PyTree = Any
@@ -284,15 +286,35 @@ def create_tree_from_func(func):
 
 
 def organized_init(init_func):
-        
     def decorated(*args, **kwargs):
         organizer = StateOrganizer()
-        if 'rng' in kwargs:
-            if kwargs['rng'] is None:
-                kwargs['rng'] = rng_util.split()
-            with rng_util.RNGState(kwargs['rng']):
-                init_func(organizer, *args, **kwargs)
+        init_func(organizer, *args, **kwargs)
+        return organizer.create_module()
+    return decorated
+
+def organized_init_with_rng(init_func):
+    signature = inspect.signature(init_func)
+    parameters = signature.parameters
+    takes_rng = 'rng' in parameters
+    rng_index  = list(parameters.keys()).index('rng')
+    def decorated(*args, **kwargs):
+        organizer = StateOrganizer()
+        if not takes_rng:
+            init_func(organizer, *args, **kwargs)
+            return organizer.create_module()
+        if len(args) >= rng_index:
+            if args[rng_index] is None:
+                rng = rng_util.split()
+                args[rng_index] = rng
+            else:
+                rng = args[rng_index]
         else:
+            if kwargs.get('rng') is None:
+                rng = rng_util.split()
+                kwargs['rng'] = rng
+            else:
+                rng = kwargs['rng']
+        with rng_util.RNGState(rng):
             init_func(organizer, *args, **kwargs)
         return organizer.create_module()
     return decorated
@@ -343,6 +365,7 @@ class StateOrganizer:
     def set_apply(self, apply=None):
         if apply is not None:
             self._state['apply'] = apply
+    
     def set_forward(self, apply=None):
         return self.set_apply(apply)
 
