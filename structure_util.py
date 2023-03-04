@@ -58,6 +58,29 @@ RETURNED_KEYS = [
 
 REQUIRED_KEYS = NON_CHILD_KEYS + [CHILD_KEY]
 
+# def state_value_and_grad(fun, output_num=0):
+    
+#     def processed_grad_fn(state, *args, **kwargs):
+#         params = get_params(state)
+
+#         def fun_to_differentiate(params):
+#             state = merge_trees(state, params):
+#             state, output = fun(state, *args, **kwargs)
+#             output_to_diff = output[output_num]
+#             extra_indices = list(range(len(output))).pop(output_num)
+#             output = (output_to_diff,) + (state,) + (output[i] for i in extra_indices))
+#             return output
+
+#         grad_fn = jax.value_and_grad(fun_to_differentiate, has_aux=True)
+
+#         (output, (state, *aux_output)), grad = grad_fn(params)
+
+#         final_output = [state] + [aux for aux in aux_output[:output_num]] + [output] + [aux for aux in aux_output[output_num:]]
+
+#         return tuple(final_output), grad
+
+#     return processed_grad_fn
+
 
 def apply_tree(tree: StructureTree, global_config: dict, *args, **kwargs) -> [StructureTree, PyTree]:
     return tree['apply'](tree, global_config, *args, **kwargs)
@@ -225,9 +248,14 @@ def merge_trees(*trees, keys_to_merge=NON_CHILD_KEYS, keys_to_override=NON_CHILD
 
     return structure_tree_map(merge_func, *trees)
 
+def get_params(tree):
+    return split_tree(tree, key_sets='params')
 
 def split_tree(tree, key_sets=NON_CHILD_KEYS):
-    key_sets = [[s] if isinstance(s, str) else s for s in key_sets]
+    if isinstance(key_sets, str):
+        return filter_keys(tree, key_sets)
+    else:
+        key_sets = [[s] if isinstance(s, str) else s for s in key_sets]
 
     def split_func(node, path=None):
         return tuple({key: node[key] for key in s} for s in key_sets)
