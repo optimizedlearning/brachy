@@ -37,7 +37,7 @@ parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--arch', default='resnet18', choices=['resnet18', 'preactresnet18'])
 parser.add_argument('--wandb', '-w', action='store_true',
-                    help='resume from checkpoint')
+                    help='use wandb logging')
 
 
 def main():
