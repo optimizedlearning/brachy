@@ -58,28 +58,29 @@ RETURNED_KEYS = [
 
 REQUIRED_KEYS = NON_CHILD_KEYS + [CHILD_KEY]
 
-# def state_value_and_grad(fun, output_num=0):
+def state_value_and_grad(fun, output_num=0):
     
-#     def processed_grad_fn(state, *args, **kwargs):
-#         params = get_params(state)
+    def processed_grad_fn(state, *args, **kwargs):
+        params, buffers = split_tree(state, ['params', 'buffers'])
 
-#         def fun_to_differentiate(params):
-#             state = merge_trees(state, params):
-#             state, output = fun(state, *args, **kwargs)
-#             output_to_diff = output[output_num]
-#             extra_indices = list(range(len(output))).pop(output_num)
-#             output = (output_to_diff,) + (state,) + (output[i] for i in extra_indices))
-#             return output
+        def fun_to_differentiate(params):
+            state = merge_trees(params, buffers)
+            state, *output = fun(state, *args, **kwargs)
+            output_to_diff = output[output_num]
+            extra_indices = list(range(len(output)))
+            extra_indices.pop(output_num)
+            output = [state] + [output[i] for i in extra_indices]
+            return output_to_diff,  tuple(output)
 
-#         grad_fn = jax.value_and_grad(fun_to_differentiate, has_aux=True)
+        grad_fn = jax.value_and_grad(fun_to_differentiate, has_aux=True)
 
-#         (output, (state, *aux_output)), grad = grad_fn(params)
+        (output, (state, *aux_output)), grad = grad_fn(params)
 
-#         final_output = [state] + [aux for aux in aux_output[:output_num]] + [output] + [aux for aux in aux_output[output_num:]]
+        final_output = tuple([aux for aux in aux_output[:output_num]] + [output] + [aux for aux in aux_output[output_num:]])
 
-#         return tuple(final_output), grad
+        return (state, final_output), grad
 
-#     return processed_grad_fn
+    return processed_grad_fn
 
 
 def apply_tree(tree: StructureTree, global_config: dict, *args, **kwargs) -> [StructureTree, PyTree]:
@@ -97,6 +98,7 @@ def bind_global_config(aux_and_apply, global_config: dict):
         next_params = filter_keys(next_tree)
         return next_params, output
     bound.aux_and_apply = aux_and_apply
+    bound.global_config = global_config
     bound.bind_global_config = Partial(bind_global_config, aux_and_apply)
     return bound
 
@@ -106,8 +108,8 @@ def bind_module(tree: StructureTree, global_config: dict) -> [dict, Callable[[An
 
     return init_params, bind_global_config(aux_and_apply, global_config)
 
-def unbind_module(tree, bound):
-    return merge_trees(tree, bound.aux_and_apply)
+def unbind_module(state, bound):
+    return merge_trees(state, bound.aux_and_apply), bound.global_config
 
 def is_structure_tree(tree, recurse=False):
     if not isinstance(tree, dict):

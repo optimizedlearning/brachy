@@ -586,8 +586,8 @@ class TestNN(unittest.TestCase):
                 }
             })
 
-        module_gen = lambda r: nn.Conv2d(30, 40, 50, padding='same', bias=True, rng=r)
-        t_module_gen = lambda: torch.nn.Conv2d(30, 40, 50, padding='same', bias=True)
+        module_gen = lambda r: nn.Conv2d(30, 100, 50, padding='same', bias=True, rng=r)
+        t_module_gen = lambda: torch.nn.Conv2d(30, 100, 50, padding='same', bias=True)
         test_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
 
 
@@ -606,8 +606,8 @@ class TestNN(unittest.TestCase):
         _, y2 = apply(tree, global_config, x)
         y_t = t_module(x_t).detach().numpy()
 
-        self.assertTrue(allclose(y_t, y))
-        self.assertTrue(allclose(y_t, y2))
+        assert jnp.allclose(y_t, y, atol=1e-4), f"not close:\ntorch:\n{y_t}\njax:\n{y}"
+        assert jnp.allclose(y_t, y2, atol=1e-4), f"not close:\ntorch:\n{y_t}\njax:\n{y2}"
 
 
 

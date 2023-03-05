@@ -226,7 +226,6 @@ def Conv2d(
     bias=True,
     padding_mode='zeros',
     dtype=None,
-    return_torch=False,
     rng=None):
     '''
     See the torch.nn.Conv2d description for what the arguments are.

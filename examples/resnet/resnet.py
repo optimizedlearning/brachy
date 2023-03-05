@@ -55,6 +55,42 @@ def BasicBlock_apply(tree, global_config, x):
 
 
 
+def PreActBasicBlock(expansion, in_planes, planes, stride=1, rng=None):
+    if rng is None:
+        rng = rng_util.split()
+
+    organizer = StateOrganizer()
+
+    organizer.register_buffer('expansion', expansion)
+    with rng_util.RNGState(rng):
+        organizer.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+        organizer.bn1 = nn.BatchNorm2d(in_planes)
+        organizer.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
+        organizer.bn2 = nn.BatchNorm2d(planes)
+
+        if stride != 1 or in_planes != expansion*planes:
+            organizer.shortcut = nn.Sequential(
+                nn.Conv2d(in_planes, expansion*planes, kernel_size=1, stride=stride, bias=False)
+            )
+        else:
+            organizer.shortcut = nn.Identity()
+
+    return organizer.create_module(PreActBasicBlock_apply)
+
+def PreActBasicBlock_apply(tree, global_config, x):
+    organizer = StateOrganizer(tree, global_config)
+
+    out = F.relu(organizer.bn1(x))
+    out = organizer.conv1(x)
+    out = organizer.bn2(out)
+    out = F.relu(out)
+    out = organizer.conv2(out)
+    out += organizer.shortcut(x)
+    return organizer.get_state(), out
+
+
+
+
 def Bottleneck(expansion, in_planes, planes, stride=1, rng=None):
     if rng is None:
         rng = rng_util.split()
@@ -145,6 +181,9 @@ def ResNet_apply(tree, global_config, x):
 
 def ResNet18(rng=None):
     return ResNet(BasicBlock, 1, [2, 2, 2, 2], rng=rng)
+
+def PreActResNet18(rng=None):
+    return ResNet(PreActBasicBlock, 1, [2, 2, 2, 2], rng=rng)
 
 
 def ResNet34(rng=None):

@@ -450,7 +450,7 @@ class TestStructureUtils(unittest.TestCase):
         params, module = su.bind_module(tree, g_config)
         module = jax.jit(module)
 
-        reconstructed_tree = su.unbind_module(params, module)
+        reconstructed_tree, _ = su.unbind_module(params, module)
 
         assert same_trees(tree, reconstructed_tree)
 
@@ -486,7 +486,7 @@ class TestStructureUtils(unittest.TestCase):
 
         module = jax.jit(module)
 
-        reconstructed_tree = su.unbind_module(params, module)
+        reconstructed_tree, _ = su.unbind_module(params, module)
 
         assert same_trees(tree, reconstructed_tree)
 

@@ -34,6 +34,7 @@ import wandb
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
+parser.add_argument('--arch', default='resnet18', choices=['resnet18', 'preactresnet18'])
 parser.add_argument('--resume', '-r', action='store_true',
                     help='resume from checkpoint')
 
@@ -78,8 +79,17 @@ def main():
     # Model
     print('==> Building model..')
     rng = jax.random.PRNGKey(0)
-    net, global_config = ResNet18(rng)
+    if args.arch == 'resnet18':
+        net, global_config = ResNet18(rng)
+    elif args.arch == 'preactresnet18':
+        net, global_config = PreActResNet18(rng)
     state, apply = bind_module(net, global_config)
+
+    def get_shape(t):
+        return tree_map(lambda x: jnp.shape(x), t)
+    print("original last linear: ",get_shape(state['submodules']['linear']))
+    state = get_torch_resnet_state(state)
+    print("pytorch last linear: ",get_shape(state['submodules']['linear']))
     test_apply = apply.bind_global_config({'train_mode': False, 'batch_axis': None})
 
 
@@ -101,12 +111,12 @@ def main():
         apply=test_apply
     )
 
-    train_step_jit = jax.jit(train_step_partial, donate_argnums=(0, 1, 2,3))
+    train_step_jit = train_step_partial #jax.jit(train_step_partial, donate_argnums=(0, 1, 2,3))
     test_step_jit = jax.jit(test_step_partial, donate_argnums=(1,2))
 
     # wandb.init(project="jax_resnet")
     for epoch in range(start_epoch, start_epoch+200):
-        state, sgd_state = train(epoch, state, sgd_state, trainloader, train_step_jit)
+        state, sgd_state = train(epoch, state, sgd_state, apply, trainloader, train_step_jit)
         test(epoch, state, testloader, test_step_jit)
 
 
@@ -140,12 +150,46 @@ def SGD_momentum(sgd_state, params, grads, lr):
     return new_params, new_sgd_state
 
 
+def get_torch_resnet_state(state):
+    sys.path.append('../external/pytorch-cifar/')
+    import models.resnet as t_resnet
+
+    t_resnet18 = t_resnet.ResNet18()
+    def t_to_np(tensor):
+        return tensor.detach().numpy()
+
+    def extract_params(node, path):
+        module = t_resnet18
+        for name in path:
+            # print('name: ',name)
+            if isinstance(name, int):
+                module = module[name]
+            else:
+                module = getattr(module, name)
+        new_node = {
+            'params': {},
+            'buffers': {k: v for k, v in node['buffers'].items()}
+        }
+        params = new_node['params']
+        for p in node['params']:
+            if p == 'scale':
+                params[p] = t_to_np(module.weight)
+            else:
+                params[p] = t_to_np(getattr(module, p))
+        return new_node
+
+    return su.structure_tree_map(extract_params, state)
+
+
+
 
 def loss(state, inputs, targets, apply):
 
     new_state, output = apply(state, inputs)
 
     cross_entropy = F.softmax_cross_entropy(output, targets)
+    # print("output: ", output)
+    # print("norm: ",jnp.linalg.norm(output))
     predictions = jnp.argmax(output, axis=-1)
     # accuracy = F.accuracy(output, targets)
 
@@ -153,29 +197,31 @@ def loss(state, inputs, targets, apply):
 
 
 
-def loss_and_grad(state, inputs, targets, apply):
+# def loss_and_grad(state, inputs, targets, apply):
     
-    params, buffers = su.split_tree(state, ['params', 'buffers'])
-    def loss_to_differentiate(params):
-        state = su.merge_trees(params, buffers)
-        new_state, predictions, cross_entropy = loss(state, inputs, targets, apply)
-        return cross_entropy, (new_state, predictions)
+#     params, buffers = su.split_tree(state, ['params', 'buffers'])
+#     def loss_to_differentiate(params):
+#         state = su.merge_trees(params, buffers)
+#         new_state, predictions, cross_entropy = loss(state, inputs, targets, apply)
+#         return cross_entropy, (new_state, predictions)
 
-    grad_fn = jax.value_and_grad(loss_to_differentiate, has_aux=True)
+#     grad_fn = jax.value_and_grad(loss_to_differentiate, has_aux=True)
 
-    (cross_entropy, (new_state, prediction)), grad = grad_fn(params)
+#     (cross_entropy, (new_state, prediction)), grad = grad_fn(params)
 
-    return (new_state, (cross_entropy, prediction)), grad
+#     return (new_state, (cross_entropy, prediction)), grad
     
 
 
 def train_step(state, opt_state, inputs, targets, epoch, apply, opt_step, eta_max=1.0, eta_min=0.0, max_epochs=200):
 
+
+    loss_and_grad = su.state_value_and_grad(loss, output_num=1)
     value_and_grad_fn = lambda s: loss_and_grad(s, inputs, targets, apply)
 
     lr = cosine_annealing(epoch, max_epochs, eta_max, eta_min)
 
-    state, opt_state, (cross_entropy, predictions) = opt_step(opt_state, value_and_grad_fn, state, lr=lr)
+    state, opt_state, (predictions, cross_entropy) = opt_step(opt_state, value_and_grad_fn, state, lr=lr)
 
     correct = jnp.sum(predictions == targets)
 
@@ -192,20 +238,28 @@ def test_step(state, inputs, targets, apply):
 
 
 # Training
-def train(epoch, state, opt_state, trainloader, train_step_jit):
+def train(epoch, state, opt_state, apply, trainloader, train_step_jit):
     print('\nEpoch: %d' % epoch)
     train_loss = 0
     correct = 0
     total = 0
     total_loss = 0
     batches = 0
-    pbar  = tqdm(enumerate(trainloader), total=len(trainloader))
+    pbar  = enumerate(trainloader) #tqdm(enumerate(trainloader), total=len(trainloader))
     for batch_idx, (inputs, targets) in pbar:
         inputs, targets = inputs.detach_().numpy(), targets.detach_().numpy()
 
         num_targets = targets.shape[0]
 
         state, opt_state, cross_entropy, batch_correct = train_step_jit(state, opt_state, inputs, targets, epoch)
+
+        tree, gc = su.unbind_module(state, apply)
+        organizer = su.StateOrganizer(tree)
+        print("bnscale: ", organizer.bn1.scale)
+
+        if batch_idx>2:
+            sys.exit(0)
+        
 
         # optimizer.zero_grad()
         # outputs = net(inputs)
@@ -219,8 +273,8 @@ def train(epoch, state, opt_state, trainloader, train_step_jit):
         correct += batch_correct
         
 
-        pbar.set_description('Batch: %d/%d, Loss: %.3f | Acc: %.3f%% (%d/%d)'
-                     % (batch_idx, len(trainloader), total_loss/(batch_idx+1), 100.*correct/total, correct, total))
+        # pbar.set_description('Batch: %d/%d, Loss: %.3f | Acc: %.3f%% (%d/%d)'
+        #              % (batch_idx, len(trainloader), total_loss/(batch_idx+1), 100.*correct/total, correct, total))
 
     # wandb.log({
     #     'train/accuracy': correct/total,
