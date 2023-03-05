@@ -1,17 +1,13 @@
-'''Train CIFAR10 with PyTorch.'''
+'''Train CIFAR10 with Jax.'''
 
 # modified from https://github.com/kuangliu/pytorch-cifar/blob/master/main.py
+
+
 import sys
 # I'll fix this later once I actually understand the python import system...
-# sys.path.append('../')
-# sys.path.append('../../')
 sys.path.append('.')
 
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
-# import torch.backends.cudnn as cudnn
 
 import torchvision
 import torchvision.transforms as transforms
@@ -21,6 +17,7 @@ import argparse
 
 from resnet import *
 from structure_util import StateOrganizer, bind_module, unbind_module, split_tree, merge_trees
+from nn import functional as F
 from tqdm import tqdm
 import jax
 from jax import numpy as jnp
@@ -33,7 +30,7 @@ import wandb
 
 
 
-parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
+parser = argparse.ArgumentParser(description='Hax CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--arch', default='resnet18', choices=['resnet18', 'preactresnet18'])
 parser.add_argument('--wandb', '-w', action='store_true',
@@ -46,10 +43,6 @@ def main():
 
     global wandb
     wandb = optional_module(wandb, args.wandb)
-
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    best_acc = 0  # best test accuracy
-    start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 
     # Data
     print('==> Preparing data..')
@@ -117,7 +110,7 @@ def main():
 
     wandb.init(project="jax_resnet")
     wandb.config.update(args)
-    for epoch in range(start_epoch, start_epoch+200):
+    for epoch in range(200):
         state, sgd_state = train_epoch(epoch, state, sgd_state, trainloader, train_step_jit)
         test(epoch, state, testloader, test_step_jit)
 
@@ -167,16 +160,14 @@ def test_step(state, inputs, targets, apply):
 
 
 # Training
-def train_epoch(epoch, state, opt_state, trainloader, train_step_jit):#, t_module):
+def train_epoch(epoch, state, opt_state, trainloader, train_step_jit):
     print('\nEpoch: %d' % epoch)
     train_loss = 0
     correct = 0
     total = 0
     total_loss = 0
     batches = 0
-    pbar = enumerate(trainloader) #
     pbar = tqdm(enumerate(trainloader), total=len(trainloader))
-    criterion = torch.nn.CrossEntropyLoss()
     for batch_idx, (inputs, targets) in pbar:
         inputs, targets = inputs.detach_().numpy(), targets.detach_().numpy()
 
