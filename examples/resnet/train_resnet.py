@@ -8,9 +8,9 @@ import sys
 sys.path.append('.')
 
 import torch
-# import torch.nn as nn
-# import torch.optim as optim
-# import torch.nn.functional as F
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
 # import torch.backends.cudnn as cudnn
 
 import torchvision
@@ -28,6 +28,7 @@ from jax.tree_util import tree_map, Partial
 
 from optim.sgd import SGD
 
+from optional_module import optional_module
 import wandb
 
 
@@ -37,9 +38,16 @@ parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--arch', default='resnet18', choices=['resnet18', 'preactresnet18'])
 parser.add_argument('--resume', '-r', action='store_true',
                     help='resume from checkpoint')
+parser.add_argument('--wandb', '-w', action='store_true',
+                    help='resume from checkpoint')
+
 
 def main():
     args = parser.parse_args()
+
+
+    global wandb
+    wandb = optional_module(wandb, args.wandb)
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     best_acc = 0  # best test accuracy
@@ -83,25 +91,19 @@ def main():
         net, global_config = ResNet18(rng)
     elif args.arch == 'preactresnet18':
         net, global_config = PreActResNet18(rng)
-    state, apply = bind_module(net, global_config)
-
-    def get_shape(t):
-        return tree_map(lambda x: jnp.shape(x), t)
-    print("original last linear: ",get_shape(state['submodules']['linear']))
-    state = get_torch_resnet_state(state)
-    print("pytorch last linear: ",get_shape(state['submodules']['linear']))
-    test_apply = apply.bind_global_config({'train_mode': False, 'batch_axis': None})
 
 
-    sgd_state, sgd_apply = SGD(state, momentum=0.9, weight_decay=5e-4)
+    state, train_apply = bind_module(net, global_config)
+    test_apply = train_apply.bind_global_config({'train_mode': False, 'batch_axis': None})
+
+
+    sgd_state, sgd_apply = SGD(state, lr=args.lr, momentum=0.9, weight_decay=5e-4)
 
 
     train_step_partial = Partial(
         train_step,
-        apply=apply,
+        apply=train_apply,
         opt_step=sgd_apply,
-        eta_max=args.lr,
-        eta_min=0.0,
         max_epochs=200,
     )
 
@@ -111,76 +113,20 @@ def main():
         apply=test_apply
     )
 
-    train_step_jit = train_step_partial #jax.jit(train_step_partial, donate_argnums=(0, 1, 2,3))
-    test_step_jit = jax.jit(test_step_partial, donate_argnums=(1,2))
+    train_step_jit = jax.jit(train_step_partial, donate_argnums=(0, 1))
+    test_step_jit = jax.jit(test_step_partial)
 
-    # wandb.init(project="jax_resnet")
+
+    wandb.init(project="jax_resnet")
+    wandb.config.update(args)
     for epoch in range(start_epoch, start_epoch+200):
-        state, sgd_state = train(epoch, state, sgd_state, apply, trainloader, train_step_jit)
+        state, sgd_state = train_epoch(epoch, state, sgd_state, trainloader, train_step_jit)
         test(epoch, state, testloader, test_step_jit)
+
 
 
 def cosine_annealing(epoch, max_epochs, eta_max, eta_min):
     return (1 + jnp.cos(jnp.pi * epoch / max_epochs)) * (eta_max - eta_min) * 0.5 + eta_min
-
-def SGD_momentum_init(state, momentum, weight_decay):
-    params, buffers = su.split_tree(state, ['params', 'buffers'])
-    return {
-        'momentum_factor': momentum,
-        'momentum_state': tree_map(lambda p: jnp.zeros_like(p), params),
-        'weight_decay': weight_decay,
-    }
-
-def SGD_momentum(sgd_state, params, grads, lr):
-    momentum_factor = sgd_state['momentum_factor']
-    momentum_state = sgd_state['momentum_state']
-    weight_decay = sgd_state['weight_decay']
-
-    grads = tree_map(lambda g, p: g + weight_decay * p, grads, params)
-    momentum_state = tree_map(lambda g, m: momentum_factor * m + (1.0-momentum_factor) * g, momentum_state, grads)
-    
-    new_sgd_state = {
-        'momentum_factor': momentum_factor,
-        'momentum_state': momentum_state,
-        'weight_decay': weight_decay,
-    }
-
-    new_params = tree_map(lambda p, m: p - lr*m, params, momentum_state)
-
-    return new_params, new_sgd_state
-
-
-def get_torch_resnet_state(state):
-    sys.path.append('../external/pytorch-cifar/')
-    import models.resnet as t_resnet
-
-    t_resnet18 = t_resnet.ResNet18()
-    def t_to_np(tensor):
-        return tensor.detach().numpy()
-
-    def extract_params(node, path):
-        module = t_resnet18
-        for name in path:
-            # print('name: ',name)
-            if isinstance(name, int):
-                module = module[name]
-            else:
-                module = getattr(module, name)
-        new_node = {
-            'params': {},
-            'buffers': {k: v for k, v in node['buffers'].items()}
-        }
-        params = new_node['params']
-        for p in node['params']:
-            if p == 'scale':
-                params[p] = t_to_np(module.weight)
-            else:
-                params[p] = t_to_np(getattr(module, p))
-        return new_node
-
-    return su.structure_tree_map(extract_params, state)
-
-
 
 
 def loss(state, inputs, targets, apply):
@@ -188,84 +134,61 @@ def loss(state, inputs, targets, apply):
     new_state, output = apply(state, inputs)
 
     cross_entropy = F.softmax_cross_entropy(output, targets)
-    # print("output: ", output)
-    # print("norm: ",jnp.linalg.norm(output))
-    predictions = jnp.argmax(output, axis=-1)
-    # accuracy = F.accuracy(output, targets)
-
-    return new_state, predictions, cross_entropy
-
-
-
-# def loss_and_grad(state, inputs, targets, apply):
-    
-#     params, buffers = su.split_tree(state, ['params', 'buffers'])
-#     def loss_to_differentiate(params):
-#         state = su.merge_trees(params, buffers)
-#         new_state, predictions, cross_entropy = loss(state, inputs, targets, apply)
-#         return cross_entropy, (new_state, predictions)
-
-#     grad_fn = jax.value_and_grad(loss_to_differentiate, has_aux=True)
-
-#     (cross_entropy, (new_state, prediction)), grad = grad_fn(params)
-
-#     return (new_state, (cross_entropy, prediction)), grad
-    
+    return new_state, output, cross_entropy
 
 
 def train_step(state, opt_state, inputs, targets, epoch, apply, opt_step, eta_max=1.0, eta_min=0.0, max_epochs=200):
 
 
     loss_and_grad = su.state_value_and_grad(loss, output_num=1)
-    value_and_grad_fn = lambda s: loss_and_grad(s, inputs, targets, apply)
+    l_t = lambda s: loss_and_grad(s, inputs, targets, apply)
 
     lr = cosine_annealing(epoch, max_epochs, eta_max, eta_min)
 
-    state, opt_state, (predictions, cross_entropy) = opt_step(opt_state, value_and_grad_fn, state, lr=lr)
+    opt_state, state, output, cross_entropy = opt_step(opt_state, state, l_t, lr=lr)
 
+    predictions = jnp.argmax(output, axis=-1)
     correct = jnp.sum(predictions == targets)
 
-    return state, opt_state, cross_entropy, correct
+    log_data = {
+        'lr': lr,
+        'correct': correct,
+        'loss': cross_entropy,
+    }
+
+    return state, opt_state, log_data
 
 
 def test_step(state, inputs, targets, apply):
 
-    _, predictions, cross_entropy = loss(state, inputs, targets, apply)
-
+    _, output, cross_entropy = loss(state, inputs, targets, apply)
+    predictions = jnp.argmax(output, axis=-1)
     correct = jnp.sum(predictions == targets)
 
     return cross_entropy, correct
 
 
 # Training
-def train(epoch, state, opt_state, apply, trainloader, train_step_jit):
+def train_epoch(epoch, state, opt_state, trainloader, train_step_jit):#, t_module):
     print('\nEpoch: %d' % epoch)
     train_loss = 0
     correct = 0
     total = 0
     total_loss = 0
     batches = 0
-    pbar  = enumerate(trainloader) #tqdm(enumerate(trainloader), total=len(trainloader))
+    pbar = enumerate(trainloader) #
+    pbar = tqdm(enumerate(trainloader), total=len(trainloader))
+    criterion = torch.nn.CrossEntropyLoss()
     for batch_idx, (inputs, targets) in pbar:
         inputs, targets = inputs.detach_().numpy(), targets.detach_().numpy()
 
         num_targets = targets.shape[0]
 
-        state, opt_state, cross_entropy, batch_correct = train_step_jit(state, opt_state, inputs, targets, epoch)
+        state, opt_state, log_data = train_step_jit(state, opt_state, inputs, targets, epoch)
 
-        tree, gc = su.unbind_module(state, apply)
-        organizer = su.StateOrganizer(tree)
-        print("bnscale: ", organizer.bn1.scale)
+        cross_entropy = log_data['loss']
+        batch_correct = log_data['correct']
 
-        if batch_idx>2:
-            sys.exit(0)
-        
-
-        # optimizer.zero_grad()
-        # outputs = net(inputs)
-        # loss = criterion(outputs, targets)
-        # loss.backward()
-        # optimizer.step()
 
         total += num_targets
         batches += 1
@@ -273,20 +196,20 @@ def train(epoch, state, opt_state, apply, trainloader, train_step_jit):
         correct += batch_correct
         
 
-        # pbar.set_description('Batch: %d/%d, Loss: %.3f | Acc: %.3f%% (%d/%d)'
-        #              % (batch_idx, len(trainloader), total_loss/(batch_idx+1), 100.*correct/total, correct, total))
+        pbar.set_description('Batch: %d/%d, Loss: %.3f | Acc: %.3f%% (%d/%d)'
+                     % (batch_idx, len(trainloader), total_loss/(batch_idx+1), 100.*correct/total, correct, total))
 
-    # wandb.log({
-    #     'train/accuracy': correct/total,
-    #     'epoch': epoch,
-    #     'train/loss': total_loss/batches
-    # })
+    wandb.log({
+        'train/accuracy': correct/total,
+        'epoch': epoch,
+        'train/loss': total_loss/batches,
+        'train/lr': log_data['lr'],
+    })
 
     return state, opt_state
 
 
 def test(epoch, state, testloader, test_step_jit):
-    # global best_acc
     test_loss = 0
     correct = 0
     total = 0
@@ -307,32 +230,15 @@ def test(epoch, state, testloader, test_step_jit):
 
         pbar.set_description('Batch: %d/%d Loss: %.3f | Acc: %.3f%% (%d/%d)'
                         % (batch_idx, len(testloader), total_loss/(batch_idx+1), 100.*correct/total, correct, total))
-    #     if batch_idx % 20 == 0:
-    #         wandb.log({
-    #             'test/accuracy': correct/total,
-    #             'epoch': epoch,
-    #             'test/loss': total_loss/batches
-    #         })
-    # wandb.log({
-    #     'test/accuracy': correct/total,
-    #     'epoch': epoch,
-    #     'test/loss': total_loss/batches
-    # })
 
+    wandb.log({
+        'test/accuracy': correct/total,
+        'epoch': epoch,
+        'test/loss': total_loss/batches
+    })
 
-    # # Save checkpoint.
-    # acc = 100.*correct/total
-    # if acc > best_acc:
-    #     print('Saving..')
-    #     state = {
-    #         'net': net.state_dict(),
-    #         'acc': acc,
-    #         'epoch': epoch,
-    #     }
-    #     if not os.path.isdir('checkpoint'):
-    #         os.mkdir('checkpoint')
-    #     torch.save(state, './checkpoint/ckpt.pth')
-    #     best_acc = acc
 
 if __name__ == '__main__':
     main()
+
+

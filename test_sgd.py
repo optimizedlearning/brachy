@@ -67,7 +67,7 @@ class TestSGD(unittest.TestCase):
         state, apply = su.bind_module(tree, global_config)
         state = su.fill_tree_from_torch_module(state, t_module)
 
-        sgd_state, sgd_apply = SGD(state, lr_base=0.001, momentum=0.9, weight_decay=0.1)
+        sgd_state, sgd_apply = SGD(state, lr=0.001, momentum=0.9, weight_decay=0.1)
 
         def train_step(sgd_state, state, x):
             value_grad_fn = su.state_value_and_grad(apply)
