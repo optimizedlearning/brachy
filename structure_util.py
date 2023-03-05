@@ -78,7 +78,7 @@ def state_value_and_grad(fun, output_num=0):
 
         final_output = tuple([aux for aux in aux_output[:output_num]] + [output] + [aux for aux in aux_output[output_num:]])
 
-        return (state, final_output), grad
+        return (state, *final_output), grad
 
     return processed_grad_fn
 
@@ -313,6 +313,43 @@ def create_tree_from_func(func):
         return tree, func(*args, **kwargs)
 
     return fill_tree({'apply': wrapped_func})
+
+
+
+
+def fill_tree_from_torch_module(tree, torch_module, get_grad=False):
+    def t_to_np(tensor):
+        try:
+            return tensor.detach().numpy()
+        except:
+            return tensor
+
+    def extract_params(node, path):
+        module = torch_module
+        for name in path:
+            # print('name: ',name)
+            if isinstance(name, int):
+                module = module[name]
+            else:
+                module = getattr(module, name)
+        new_node = {
+            key: {subkey: value for subkey, value in node[key].items()} for key in node if key != CHILD_KEY
+        }
+        param_process = lambda x: x
+        if get_grad:
+            param_process = lambda x: x.grad
+
+        if 'params' in node:
+            for p in node['params']:
+                new_node['params'][p] = t_to_np(param_process(getattr(module, p)))
+        if 'buffers' in node:
+            for p in node['buffers']:
+                if hasattr(module, p):
+                    new_node['buffers'][p] = t_to_np(getattr(module, p))
+        return new_node
+
+    return structure_tree_map(extract_params, tree)
+
 
 
 def organized_init(init_func):

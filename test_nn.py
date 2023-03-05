@@ -315,7 +315,7 @@ class TestNN(unittest.TestCase):
         H = 4
         W = 5
 
-        x = jnp.array(range(B*C*H*W), dtype=jnp.float32).reshape((B, C, H, W))
+        x = jnp.ones(shape = (B, C, H, W), dtype=jnp.float32)
         x2 = jnp.sqrt(jnp.array(range( B*C*H*W), dtype=jnp.float32).reshape((B, C, H, W)))
 
         x_t = torch.tensor(np.array(x))
@@ -348,7 +348,7 @@ class TestNN(unittest.TestCase):
 
         y6_t = t_to_np(t_module(x_t))
 
-        assert jnp.allclose(y1, y1_t, atol=1e-6)
+        assert jnp.allclose(y1, y1_t, atol=1e-6), f"failed: y1: {y1}, y1_t: {y1_t}"
 
         assert jnp.allclose(y2, y2_t, atol=1e-6)
 

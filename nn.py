@@ -304,7 +304,7 @@ def Conv2d_apply(tree, global_config, x):
     '''
     weight = tree['params']['weight']
 
-    buffers = SimpleNamespace(**tree['aux'])
+    aux = SimpleNamespace(**tree['aux'])
     
 
     
@@ -315,12 +315,12 @@ def Conv2d_apply(tree, global_config, x):
     conv = jax.lax.conv_general_dilated(
         x,
         weight,
-        window_strides=buffers.stride,
-        padding=buffers.padding,
+        window_strides=aux.stride,
+        padding=aux.padding,
         lhs_dilation=None,
-        rhs_dilation=buffers.dilation,
+        rhs_dilation=aux.dilation,
         dimension_numbers=('NCHW', 'OIHW', 'NCHW'),
-        feature_group_count=buffers.feature_group_count,
+        feature_group_count=aux.feature_group_count,
         batch_group_count=1,
         precision=None,
         preferred_element_type=None)
@@ -530,7 +530,7 @@ def BatchNorm(num_features, eps=1e-05, momentum=0.1, affine=True, track_running_
     organizer = su.StateOrganizer(global_config={'train_mode': True, 'batch_axis': batch_axis})
 
     if affine:
-        organizer.register_parameter('scale', jnp.ones(num_features))
+        organizer.register_parameter('weight', jnp.ones(num_features))
         organizer.register_parameter('bias', jnp.zeros(num_features))
 
     organizer.register_buffer('eps', eps)
@@ -585,7 +585,7 @@ def BatchNorm_apply(tree, global_config, x):
 
 
     if use_running_stats:
-        y = (x - organizer.running_mean.reshape(broadcast_shape))/jnp.sqrt(organizer.running_var.reshape(broadcast_shape))
+        y = (x - organizer.running_mean.reshape(broadcast_shape))/(jnp.sqrt(organizer.running_var.reshape(broadcast_shape) + organizer.eps))
 
     if not use_running_stats:
         stats_axes = list(range(x.ndim))
@@ -609,7 +609,7 @@ def BatchNorm_apply(tree, global_config, x):
         var = second_moment - mean**2
 
 
-        y = (x - mean)/jnp.sqrt(var)
+        y = (x - mean)/(jnp.sqrt(var + organizer.eps))
 
         if organizer.track_running_stats:
             buffer_shape = organizer.running_mean.shape
@@ -631,7 +631,7 @@ def BatchNorm_apply(tree, global_config, x):
 
 
     if organizer.affine:
-        y =  y * organizer.scale.reshape(broadcast_shape) + organizer.bias.reshape(broadcast_shape)
+        y =  y * organizer.weight.reshape(broadcast_shape) + organizer.bias.reshape(broadcast_shape)
 
     return organizer.get_state(), y
 
