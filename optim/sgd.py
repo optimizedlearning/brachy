@@ -5,7 +5,7 @@ from jax import numpy as jnp
 import jax
 
 def SGD(model_state, lr=1.0, momentum=0.0, weight_decay=0.0, params_filter=su.get_params):
-    params = params_filter(model_state)
+    params, rest = params_filter(model_state)
     state = {
         'momentum_buffer': tree_map(lambda x: jnp.zeros_like(x), params),
         'momentum_coef': momentum,
@@ -30,7 +30,7 @@ def SGD_apply(
 
     (model_state_next, *value), grad = value_and_grad_fn(model_state)
 
-    params = params_filter(model_state_next)
+    params, rest = params_filter(model_state_next)
 
     momentum_buffer_next = tree_map(
         lambda m, g, p: m * momentum_coef +  (g + weight_decay * p),
@@ -44,7 +44,7 @@ def SGD_apply(
         params, momentum_buffer_next
     )
 
-    model_state = params_merger(model_state_next, params)
+    model_state = params_merger(rest, params)
 
     return sgd_state, model_state, *value
 

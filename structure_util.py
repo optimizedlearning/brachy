@@ -225,6 +225,7 @@ def empty_tree(tree=None):
 
     return structure_tree_map(lambda t, path=None: {k:v for k, v in empty.items()}, tree)
 
+@Partial
 def merge_trees(*trees, keys_to_merge=NON_CHILD_KEYS, keys_to_override=NON_CHILD_KEYS):
 
     if len(trees) == 0:
@@ -250,8 +251,11 @@ def merge_trees(*trees, keys_to_merge=NON_CHILD_KEYS, keys_to_override=NON_CHILD
 
     return structure_tree_map(merge_func, *trees)
 
+@Partial
 def get_params(tree):
-    return split_tree(tree, key_sets='params')
+    def split_func(node, path):
+        return {'params': node['params']}, {key: node[key] for key in node if key not in ['params', CHILD_KEY]}
+    return structure_tree_map(split_func, tree)
 
 def split_tree(tree, key_sets=NON_CHILD_KEYS):
     if isinstance(key_sets, str):

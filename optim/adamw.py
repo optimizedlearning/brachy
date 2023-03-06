@@ -5,7 +5,7 @@ from jax import numpy as jnp
 import jax
 
 def AdamW(model_state, lr=1.0, betas=(0.9, 0.999), weight_decay=0.01, eps=1e-8, params_filter=su.get_params):
-    params = params_filter(model_state)
+    params, rest = params_filter(model_state)
     state = {
         'per_param_state': tree_map(
             lambda p: {
@@ -43,7 +43,7 @@ def AdamW_apply(
 
     (model_state_next, *value), grad = value_and_grad_fn(model_state)
 
-    params = params_filter(model_state_next)
+    params, rest = params_filter(model_state_next)
 
 
     def per_param_state_update(g, state):
@@ -74,7 +74,7 @@ def AdamW_apply(
         opt_state['per_param_state']
     )
 
-    model_state = params_merger(model_state_next, params)
+    model_state = params_merger(rest, params)
 
     return opt_state, model_state, *value
 

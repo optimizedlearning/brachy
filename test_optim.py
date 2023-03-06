@@ -70,6 +70,7 @@ class TestSGD(unittest.TestCase):
 
         sgd_state, sgd_apply = SGD(state, lr=0.001, momentum=0.9, weight_decay=0.1)
 
+        @jax.jit
         def train_step(sgd_state, state, x):
             value_grad_fn = su.state_value_and_grad(apply)
             (state, value), grad = value_grad_fn(state, x)
@@ -109,6 +110,7 @@ class TestSGD(unittest.TestCase):
 
         opt_state, opt_apply = AdamW(state, lr=0.001)
 
+        @jax.jit
         def train_step(opt_state, state, x):
             value_grad_fn = su.state_value_and_grad(apply)
             (state, value), grad = value_grad_fn(state, x)
