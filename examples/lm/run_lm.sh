@@ -23,4 +23,4 @@ cd /projectnb/aclab/cutkosky/hax
 module load python3 pytorch tensorflow cuda/11.2 cudnn/8.1.1
 source /projectnb/aclab/cutkosky/gpujaxenv/bin/activate
 pip install -r requirements.txt
-python examples/resnet/train_resnet.py --wandb
+python examples/lm/train_lm.py --wandb

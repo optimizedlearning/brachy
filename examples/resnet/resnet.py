@@ -200,11 +200,3 @@ def ResNet101(rng=None):
 
 def ResNet152(rng=None):
     return ResNet(Bottleneck, 4, [3, 8, 36, 3], rng=rng)
-
-
-
-# import jax
-
-# rng = jax.random.PRNGKey(0)
-
-# r = ResNet18(rng)

@@ -45,15 +45,16 @@ def main():
     # anywy, this is why we use the non-"fast"    
     # tokenizer = transformers.GPTNeoXTokenizerFast.from_pretrained('EleutherAI/gpt-neox-20b')
     tokenizer = transformers.GPT2Tokenizer.from_pretrained('gpt2')
-    # huggingface seems to recommend making the pad token some english-readable thing like "<|padtoken|>".
-    # This seems bad to me: if the training set is the internet including huggingface documentation, then
-    # the pad token will naturally appear in the training set, and I want to use the pad token as a marker
-    # to not compute the softmax loss on a token, so it is important that it not show up in the training set.
-    # To avoid this, I choose something more bizarre:
-    pad_token_string = '4P$2A|7D_6D-0I]1N/0G'
+    tokenizer.pad_token = tokenizer.eos_token
+    # # huggingface seems to recommend making the pad token some english-readable thing like "<|padtoken|>".
+    # # This seems bad to me: if the training set is the internet including huggingface documentation, then
+    # # the pad token will naturally appear in the training set, and I want to use the pad token as a marker
+    # # to not compute the softmax loss on a token, so it is important that it not show up in the training set.
+    # # To avoid this, I choose something more bizarre:
+    # pad_token_string = '4P$2A|7D_6D-0I]1N/0G'
 
-    tokenizer.add_special_tokens({'pad_token': pad_token_string})
-    pad_token = tokenizer(pad_token_string)['input_ids'][0]
+    # tokenizer.add_special_tokens({'pad_token': pad_token_string})
+    # pad_token = tokenizer(pad_token_string)['input_ids'][0]
     
     config.model.vocab_size = tokenizer.vocab_size
 
@@ -66,7 +67,7 @@ def main():
 
     print("Initializing optimizer...")
     optconf = config.train.optimizer
-    opt_state, opt_apply = AdamW(model_state, lr=optconf.lr, beta1=optconf.beta1, beta2=optconf.beta2, weight_decay=optconf.weight_decay)
+    opt_state, opt_apply = AdamW(model_state, lr=1.0, beta1=optconf.beta1, beta2=optconf.beta2, weight_decay=optconf.weight_decay)
 
     print("Setting up dataloader...")
     train_loader = load_c4_data(config, tokenizer)
@@ -80,18 +81,17 @@ def main():
         config,
         opt_state,
         model_state,
-        pad_token,
         train_loader,
         opt_apply,
         model_apply)
 
 
 
-def loss(model_state, model_apply, inputs, targets, pad_token):
+def loss(model_state, model_apply, inputs, targets):
 
     model_state, outputs = model_apply(model_state, inputs)
 
-    cross_entropy = F.softmax_cross_entropy(outputs, targets, ignore_index=pad_token)
+    cross_entropy = F.softmax_cross_entropy(outputs, targets)
 
     return model_state, cross_entropy, outputs
 
@@ -101,14 +101,13 @@ def train_step(
     inputs,
     targets,
     token_count,
-    pad_token,
     opt_apply,
     model_apply,
     lr_scheduler):
 
     loss_and_grad = su.state_value_and_grad(loss, output_num=0)
 
-    l_t = lambda s: loss_and_grad(s, model_apply, inputs, targets, pad_token)
+    l_t = lambda s: loss_and_grad(s, model_apply, inputs, targets)
 
     lr = lr_scheduler(token_count)
 
@@ -139,7 +138,7 @@ def get_lr_scheduler(config):
 
     warmup_tokens = config.train.optimizer.get('warmup_tokens', 0)
 
-    warmed_up_lr_scheduler = lambda tokens: jnp.minimum(1.0, tokens/warmup_tokens) * lr_scheduler(tokens)
+    warmed_up_lr_scheduler = lambda tokens: config.train.optimizer.lr * jnp.minimum(1.0, tokens/warmup_tokens) * lr_scheduler(tokens)
 
     return warmed_up_lr_scheduler
 
@@ -147,38 +146,44 @@ def train_loop(
     config,
     opt_state,
     model_state,
-    pad_token,
     train_loader,
     opt_apply,
     model_apply):
 
-    pbar = tqdm(enumerate(train_loader))
-
-    token_count = 0
-
-    last_log_time = 0
-
-    total_correct = 0
-
-    running_loss = 0.0
 
     lr_scheduler = get_lr_scheduler(config)
 
+    # JIT the train step.
+    # We first wrap the train step in partial in order
+    # to capture all the constant arguments that are not JAX types
+    # and so would throw an error when jitted.
+    # Since these constant types are all functions, we could technically
+    # also wrap them in Partials and then use static_argnums in the jit call,
+    # but this way we are guarded against inadvertently changing the arguments and
+    # retrigging compilation.
     train_step_partial = Partial(
         train_step,
         model_apply=model_apply,
         opt_apply=opt_apply,
-        lr_scheduler=lr_scheduler,
-        pad_token=pad_token)
+        lr_scheduler=lr_scheduler)
     train_step_jit = jax.jit(train_step_partial)
 
+    # statistics to track during training.
+    token_count = 0
+    total_correct = 0
+    running_loss = 0.0
 
+    # timestamp markers to throttle log frequency and record training speed.
+    last_log_time = 0
+    last_token_count = 0
+
+    pbar = tqdm(enumerate(train_loader))
     for batch_idx, batch in pbar:
 
         inputs = jnp.array(batch['input_ids'])
         targets = jnp.array(batch['labels'])
 
-        tokens = jnp.sum(targets != pad_token)
+        tokens = jnp.sum(targets != -100)
 
         opt_state, model_state, log_data = train_step_jit(opt_state, model_state, inputs, targets, token_count)
 
@@ -186,6 +191,8 @@ def train_loop(
         total_correct += log_data['correct']
         running_loss += (log_data['loss'] - running_loss)*tokens/(token_count)
 
+
+        curtime = time.time()
         log_data.update({
             'tokens': token_count,
             'total_correct': total_correct,
@@ -193,15 +200,15 @@ def train_loop(
             'running_loss': running_loss,
             'minibatch_accuracy': log_data['correct']/tokens,
             'minibatch_count': batch_idx,
-            'examples': batch_idx * config.train.batch_size
+            'examples': batch_idx * config.train.batch_size,
+            'tokens_per_sec': (token_count - last_token_count)/(curtime - last_log_time),
         })
 
 
-        curtime = time.time()
-
         if curtime > last_log_time + config.train.log_freq_seconds:
-            wandb.log(log_data)
             last_log_time = curtime
+            last_token_count = token_count
+            wandb.log(log_data)
 
         pbar.set_description('Batch: %d, Running Loss: %.3f | Running Acc: %.3f%% (%d/%d)'
                      % (batch_idx, running_loss, 100.*total_correct/token_count, total_correct, token_count))

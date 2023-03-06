@@ -7,8 +7,8 @@ import random
 import functools
 
 
-def shift_labels(pad_token, batch):
-    batch["labels"] = F.pad(batch["labels"][:, 1:], (0, 1), value=pad_token)
+def shift_labels(batch):
+    batch["labels"] = F.pad(batch["labels"][:, 1:], (0, 1), value=-100)
     return batch
 
 def split_sequences(batch, max_length):
@@ -19,7 +19,6 @@ def split_sequences(batch, max_length):
     return batch
 
 def postprocess_collate_fn(collate_fn, post_fn):
-    print("in postprocess generator...")
     old_torch_call = collate_fn.torch_call
     def new_torch_call(self, *args, **kwargs):
         batch = old_torch_call(self, *args, **kwargs)
@@ -30,7 +29,7 @@ def postprocess_collate_fn(collate_fn, post_fn):
 
 def get_c4_loader_next_token(tokenizer, split, batch_size, max_length=None, shuffle_buffer_size=0,
                              pad_to_multiple_of=None, mlm=False, mlm_probability=0, random_start=False, 
-                             ds_path="/projectnb/aclab/datasets/c4/en/", num_workers=2, **collator_args):
+                             ds_path="/projectnb/aclab/datasets/c4/en/", num_workers=2, output_format='torch', **collator_args):
     '''
     Produces a pytorch dataloader object to train C4 on a "next token prediction" task
     in which each example is some length L tokenized text, and the model must
@@ -68,10 +67,8 @@ def get_c4_loader_next_token(tokenizer, split, batch_size, max_length=None, shuf
                                                  mlm_probability=mlm_probability,
                                                  pad_to_multiple_of=pad_to_multiple_of,
                                                  **collator_args)
-    pad_token = tokenizer(tokenizer.pad_token)['input_ids'][0]
-    # print("collate fn",collate_fn)
-    # print("collate fn.torch_call",collate_fn.torch_call)
-    collate_fn = postprocess_collate_fn(collate_fn, functools.partial(shift_labels,pad_token))
+
+    collate_fn = postprocess_collate_fn(collate_fn, shift_labels)
     return get_c4_loader_from_collate_fn(tokenizer=tokenizer,
                                          split=split,
                                          batch_size=batch_size,
@@ -79,12 +76,13 @@ def get_c4_loader_next_token(tokenizer, split, batch_size, max_length=None, shuf
                                          max_length=max_length,
                                          random_start=random_start,
                                          collate_fn=collate_fn,
-                                         num_workers=num_workers)
+                                         num_workers=num_workers,
+                                         output_format=output_format)
                                     
 
 def get_c4_loader_lm(tokenizer, split, batch_size, mlm, mlm_probability, shuffle_buffer_size=0,
                      max_length=None, pad_to_multiple_of=0, random_start=False,
-                     num_workers=2, **collator_args):
+                     num_workers=2, output_format='torch', **collator_args):
     collate_fn = DataCollatorForLanguageModeling(tokenizer,
                                                  mlm=mlm,
                                                  mlm_probability=mlm_probability,
@@ -99,10 +97,21 @@ def get_c4_loader_lm(tokenizer, split, batch_size, mlm, mlm_probability, shuffle
                                          random_start=random_start,
                                          collate_fn=collate_fn,
                                          ds_path=ds_path,
-                                         num_workers=num_workers)
+                                         num_workers=num_workers,
+                                         output_format=output_format)
 
 
-def get_c4_loader_from_collate_fn(tokenizer, split, batch_size, max_length, shuffle_buffer_size, random_start, collate_fn, ds_path="/projectnb/aclab/datasets/c4/en/", num_workers=2):
+def get_c4_loader_from_collate_fn(
+    tokenizer, 
+    split, 
+    batch_size, 
+    max_length, 
+    shuffle_buffer_size, 
+    random_start, 
+    collate_fn, 
+    ds_path="/projectnb/aclab/datasets/c4/en/", 
+    num_workers=2,
+    output_format='torch'):
     c4 = load_dataset('c4', 'en', data_dir=ds_path, streaming=True, split=split)
     c4 = c4.filter(lambda x: len(x['text']) > 1)
     if shuffle_buffer_size > 0:
@@ -115,15 +124,12 @@ def get_c4_loader_from_collate_fn(tokenizer, split, batch_size, max_length, shuf
                                             max_length=max_length),
                                 remove_columns=["text", "timestamp", "url"],
                                 batched=True,
-                                batch_size=batch_size) # half the workers for this
-    c4 = c4.with_format("torch")
+                                batch_size=batch_size)
+    c4 = c4.with_format(output_format)
 
 
     dataloader = DataLoader(c4,
                             batch_size=batch_size,
                             collate_fn=collate_fn,
-                            num_workers=num_workers) # half the workers for this.
-                            # I have no idea if this half the workers thing is really needed (I don't know how
-                            # the worker pool is managed here... but the SCC kept killing my jobs for using too many
-                            # CPUs so I did this and things got better. Of course, I could have just asked for more CPUs instead.)
+                            num_workers=num_workers)
     return dataloader

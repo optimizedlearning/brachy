@@ -8,11 +8,12 @@ module load python3 pytorch tensorflow cuda/11.2 cudnn/8.1.1
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
+Probably you should create a separate environment for GPU vs CPU and run the module load and pip install commands separately on a GPU interactive process. Otherwise
+I'm not sure the GPU parts will install correctly. You can try replacing `requirements.txt` with `requirements_cpu.txt` for a CPU install.
 
 
 HAX tries to keep your code as close to the functional spirit of JAX as possible
 while also facilitating easy portability from pytorch.
-
 
 
 In pytorch, a module is an instance of a class that stores various model parameters

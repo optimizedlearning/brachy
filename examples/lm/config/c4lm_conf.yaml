@@ -23,7 +23,7 @@ train:
     beta1: 0.9
     beta2: 0.99
 
-    schedule: none
+    schedule: linear_decay
 
     warmup_tokens: 1e7
 

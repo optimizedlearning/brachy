@@ -20,7 +20,7 @@ from nn import functional as F
 
 @su.organized_init_with_rng
 def AttentionBlock(organizer, config, rng=None):
-    # the decorator will take care of setting and propogating the rng to submodules
+    # the decorator will take care of propogating the rng to submodules
 
     embed_dim = config.embed_dim
     num_heads = config.num_heads
