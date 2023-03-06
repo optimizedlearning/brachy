@@ -1,5 +1,5 @@
 # HAX
-## A "simple" neural network library on top of JAX.
+## A (increasingly less) simple neural network library on top of JAX.
 
 BU SCC setup instructions:
 ```
@@ -11,7 +11,7 @@ pip install -r requirements.txt
 Probably you should create a separate environment for GPU vs CPU and run the module load and pip install commands separately on a GPU interactive process. Otherwise
 I'm not sure the GPU parts will install correctly. You can try replacing `requirements.txt` with `requirements_cpu.txt` for a CPU install.
 
-
+## Overview
 HAX tries to keep your code as close to the functional spirit of JAX as possible
 while also facilitating easy portability from pytorch.
 
@@ -88,8 +88,26 @@ very weird behavior when jitting. Instead, these values are meant to be edited a
 functions provided by Hax (e.g. `bind_module`) explicitly enforce this behavior if they are used. In fact, the return value from
 an  apply function need not even have the  keys `"apply"` and `"aux"`.
 
+## Structure Tree Terminology
 
+Technically, many (possible most) of the functions in this package to not require a structure tree to have all the keys `"params"`, `"buffers"`, `"aux"`, `"apply"`: only the `"submodules"` key is really needed. Given a structure tree `tree`, we say that `tree` is a leaf if `tree["submodules"] = {}`. Further, we say that `tree` is a node with path `[k1, k2, k3]` if there is a root tree `root` such that `tree = root["submodules"][k1]["submodules"][k2]["submodules"][k3]`. In general, the path of `tree["submodules"][k]` is `P + [k]` where `P` is the path of `tree`.
 
+## Structure Tree Utils
+
+The file `structure_tree_util.py` contains the core functions that power converting structure trees into the forward pass function for a module and back.
+Key utilities include:
+
+* `structure_tree_map(func: Callable, *trees: List[dict], path={}) -> Union[dict, Tuple[dict,...]]`. The first argument is a function `func(*nodes, path)` that outputs a leaf node (or a tuple of leaf nodes).The second argument `trees` must be either a single structure tree or a list of structure trees. The output will be a structure tree such that for each unique path `P` in any of the trees in `trees`, the output tree will have a node with path `P` that is the output of `func` with first argument `nodes` being the list `[subtree of tree at path P for tree in trees]` and `path=P`. If `func` returns multiple trees, then `structure_tree_map` will output the corresponding multiple trees.
+* `bind_module(tree: dict, global_config: dict) -> dict, Callable`. This function takes as input a structure tree and a global config and returns a `state` dictionary and an `apply` function. The state dictionary is just the original structure tree with all but the `"params"`, `"buffers"`, and `"submodules"` keys removed. This represents the current mutable state of the module. The apply function will apply the tree: it takes a state dictionary and whatever inputs the module requires and returns both an updated state dictionary and all the ouptuts of the module.
+The returned `apply` function from `bind_module` can be Jitted as it captures the unhashable `global_config` dictionary in a closure. To change the global config dictionary, use `apply.bind_global_config(new_global_config)`. To recover a full structure tree, use `tree, global_config = unbind_module(state, apply)`.
+* `StateOrganizer`: this class does a lot of the heavy lifting to make defining new structure trees similar to the experience of defining a module in pytorch. Eventually, one can call `organizer.create_module()` to obtain a tuple `tree, global_config`. When building the tree, if you assign a new attribute to a `StateOrganizer` object with a tuple via `'organizer.name = (subtree, sub_global_config)`, then the tree returned by `organizer.create_module()` will have `subtree` as the value `["submodules"][name]`. Also, `global_config` will be merged with `sub_global_config` (value in `sub_global_config` do not override old values).
+See the examples directory to see how to use `StateOrganizer` objects.
+
+## Random number generator utils
+
+The file `rng_util.py` contains a context manager that makes it easier to pass JAX prngkeys down through a tree of functions without having to write a ton of `rng, subkey = jax.random.split(rng)` all over the place. See the comments at the top of the file or the usages in the resnet example or the `nn.py` file for more info.
+
+This utility can be combined with the `StateOrganizer` via the decorators `organized_init_with_rng` and `organized_apply` defined in `structure_util.py`. See the language modeling example for these decorators in use.
     
 
 
