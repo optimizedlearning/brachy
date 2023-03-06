@@ -37,6 +37,7 @@ p = jax.random.bernoulli(rng, blah)
 
 import jax
 from jax.tree_util import Partial
+import inspect
 
 _RNG = None
 
@@ -74,6 +75,33 @@ class RNGState:
 
     def get_rng(self):
         return _RNG
+
+
+def wrap_func(func):
+    signature = inspect.signature(func)
+    parameters = signature.parameters
+    takes_rng = 'rng' in parameters
+    if not takes_rng:
+        return func
+    
+    rng_index  = list(parameters.keys()).index('rng')
+    def decorated(*args, **kwargs):
+        if len(args) >= rng_index:
+            if args[rng_index] is None:
+                rng = rng_util.split()
+                args[rng_index] = rng
+            else:
+                rng = args[rng_index]
+        else:
+            if kwargs.get('rng') is None:
+                rng = rng_util.split()
+                kwargs['rng'] = rng
+            else:
+                rng = kwargs['rng']
+        with rng_util.RNGState(rng):
+            value = func(*args, **kwargs)
+        return value
+    return decorated
 
 
 def fold_in(data: int) -> None:
