@@ -1,0 +1,30 @@
+
+model:
+  num_layers: 12
+  embed_dim: 768
+  num_heads: 12
+  max_input_length: 30
+
+train:
+  batch_size: 128
+  num_workers: 4
+
+  log_freq_seconds: 10
+
+  max_tokens: 1e9
+
+  optimizer:
+    
+    name: AdamW
+
+  
+    lr: 1e-4
+    weight_decay: 1e-3
+    beta1: 0.9
+    beta2: 0.99
+
+    schedule: none
+
+    warmup_tokens: 1e7
+
+

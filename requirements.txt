@@ -3,3 +3,6 @@ jax[cuda]==0.3.25 # the SCC's jax module is 0.2.19, so let's get at least 0.3. A
 einops
 wandb
 tqdm
+transformers
+datasets
+omegaconf

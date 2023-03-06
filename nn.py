@@ -415,7 +415,7 @@ def MultiheadAttention(
         v_dim = embed_dim
 
     if rng is None:
-        rng = rng_utils.split()
+        rng = rng_util.split()
 
     
 
@@ -499,7 +499,7 @@ def CausalSelfAttention(
     return_torch:  whether to return a pytorch object.
     '''
     if rng is None:
-        rng = rng_utils.split()
+        rng = rng_util.split()
 
 
     organizer = su.StateOrganizer()

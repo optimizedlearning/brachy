@@ -15,8 +15,8 @@ import torchvision.transforms as transforms
 import os
 import argparse
 
-from resnet import *
-from structure_util import StateOrganizer, bind_module, unbind_module, split_tree, merge_trees
+from resnet import ResNet18, PreActResNet18
+from structure_util import StateOrganizer, bind_module, unbind_module, split_tree, merge_trees, state_value_and_grad
 from nn import functional as F
 from tqdm import tqdm
 import jax
@@ -131,7 +131,7 @@ def loss(state, inputs, targets, apply):
 def train_step(state, opt_state, inputs, targets, epoch, apply, opt_step, eta_max=1.0, eta_min=0.0, max_epochs=200):
 
 
-    loss_and_grad = su.state_value_and_grad(loss, output_num=1)
+    loss_and_grad = state_value_and_grad(loss, output_num=1)
     l_t = lambda s: loss_and_grad(s, inputs, targets, apply)
 
     lr = cosine_annealing(epoch, max_epochs, eta_max, eta_min)

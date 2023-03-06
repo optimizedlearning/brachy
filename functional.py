@@ -94,10 +94,14 @@ def softmax_cross_entropy(input, target, weight=None, ignore_index=-100, reducti
     # for the correct labels.
 
     if axis is None:
-        if input.ndim == 1:
-            axis = 0
-        else:
-            axis = 1
+        axis = input.ndim - 1
+        # if input.ndim == 1:
+        #     axis = 0
+        # else:
+        #     axis = 1
+    
+    if axis<0:
+        axis = input.ndim + axis
 
 
     C = input.shape[axis]
