@@ -8,6 +8,8 @@ module load python3 pytorch tensorflow cuda/11.2 cudnn/8.1.1
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
+Note that currently the dependency restricts to jax version 3.25, as later versions seem to have some issue with 
+the convolution operation. I think it is probably due to the cuda or cudnn version, but I can't upgrade those so we downgrade jax.
 Probably you should create a separate environment for GPU vs CPU and run the module load and pip install commands separately on a GPU interactive process. Otherwise
 I'm not sure the GPU parts will install correctly. You can try replacing `requirements.txt` with `requirements_cpu.txt` for a CPU install.
 

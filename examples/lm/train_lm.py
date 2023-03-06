@@ -67,7 +67,7 @@ def main():
 
     print("Initializing optimizer...")
     optconf = config.train.optimizer
-    opt_state, opt_apply = AdamW(model_state, lr=1.0, beta1=optconf.beta1, beta2=optconf.beta2, weight_decay=optconf.weight_decay)
+    opt_state, opt_apply = AdamW(model_state, lr=1.0, betas=optconf.betas, weight_decay=optconf.weight_decay)
 
     print("Setting up dataloader...")
     train_loader = load_c4_data(config, tokenizer)

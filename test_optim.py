@@ -15,6 +15,7 @@ import unittest
 import structure_util as su
 
 from optim.sgd import SGD
+from optim.adamw import AdamW
 
 
 class T_FF(torch.nn.Module):
@@ -93,6 +94,46 @@ class TestSGD(unittest.TestCase):
             value_t = value_t.detach().numpy()
 
             assert jnp.allclose(value, value_t), f"values not close on iteration {i}: jax value: {value}, torch value: {value_t}"
+
+
+
+    def test_adamw(self):
+        t_module = T_FF()
+
+        rng = jax.random.PRNGKey(0)
+
+        tree, global_config = simple_ff(rng=rng)
+
+        state, apply = su.bind_module(tree, global_config)
+        state = su.fill_tree_from_torch_module(state, t_module)
+
+        opt_state, opt_apply = AdamW(state, lr=0.001)
+
+        def train_step(opt_state, state, x):
+            value_grad_fn = su.state_value_and_grad(apply)
+            (state, value), grad = value_grad_fn(state, x)
+            l_t = lambda state: value_grad_fn(state, x)
+            return opt_apply(opt_state, state, l_t, lr=1.0)
+
+
+        opt_t = torch.optim.AdamW(t_module.parameters(), lr=0.001)
+
+        for i in range(10):
+
+            x = jnp.ones(shape=(4,3,5,4)) * jnp.sqrt(i+1)
+            x_t = torch.tensor(np.array(x))
+            
+            opt_state, state, value = train_step(opt_state, state, x)
+
+            opt_t.zero_grad()
+            value_t = t_module(x_t)
+            value_t.backward()
+            opt_t.step()
+
+            value_t = value_t.detach().numpy()
+
+            assert jnp.allclose(value, value_t), f"values not close on iteration {i}: jax value: {value}, torch value: {value_t}"
+
 
 
 
