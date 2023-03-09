@@ -3,7 +3,7 @@
 
 BU SCC setup instructions:
 ```
-module load python3 pytorch tensorflow cuda/11.2 cudnn/8.1.1
+module load python3 pytorch tensorflow cuda/11.2 cudnn/8.1.1 # these versions are specific... do not load the jax module it is woefully out of date right now and will be updated soon hopefully.
 # (set up/activate virtual env e.g. python -m venv gpujaxenv; source gpujaxenv/bin/activate)
 pip install --upgrade pip
 pip install -r requirements.txt
@@ -11,7 +11,7 @@ pip install -r requirements.txt
 Note that currently the dependency restricts to jax version 3.25, as later versions seem to have some issue with 
 the convolution operation. I think it is probably due to the cuda or cudnn version, but I can't upgrade those so we downgrade jax.
 Probably you should create a separate environment for GPU vs CPU and run the module load and pip install commands separately on a GPU interactive process. Otherwise
-I'm not sure the GPU parts will install correctly. You can try replacing `requirements.txt` with `requirements_cpu.txt` for a CPU install.
+I'm not sure the GPU parts will install correctly. You can try replacing `requirements.txt` with `requirements_cpu.txt` for a CPU install. I've asked RCS to just provide a recent Jax installation via the module system, so hopefully these issues will go away.
 
 ## Overview
 HAX tries to keep your code as close to the functional spirit of JAX as possible

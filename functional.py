@@ -95,11 +95,6 @@ def softmax_cross_entropy(input, target, weight=None, ignore_index=-100, reducti
 
     if axis is None:
         axis = input.ndim - 1
-        # if input.ndim == 1:
-        #     axis = 0
-        # else:
-        #     axis = 1
-    
     if axis<0:
         axis = input.ndim + axis
 
@@ -110,13 +105,11 @@ def softmax_cross_entropy(input, target, weight=None, ignore_index=-100, reducti
         weight_shape = (1,) * axis + (input.shape[axis],) + (1,) * (input.ndim - axis-1)
         weight = weight.reshape(weight_shape)
 
-    # def entropy(probs):
-    #     return -jnp.sum(probs * jnp.log(probs), axis=axis)
 
     if isinstance(target, int) or target.ndim != input.ndim:
 
         no_ignore = jax.lax.stop_gradient(target!=ignore_index)
-        logits_max = jnp.max(input, axis=axis, keepdims=True)#, where=no_ignore, initial=0.0)
+        logits_max = jnp.max(input, axis=axis, keepdims=True)#, where=no_ignore, initial=-jnp.inf)
         logits = input - jax.lax.stop_gradient(logits_max)
 
         broadcast_shape = logits.shape[:axis] + (1,) + logits.shape[axis+1:]
@@ -138,7 +131,7 @@ def softmax_cross_entropy(input, target, weight=None, ignore_index=-100, reducti
                 target_probs = target_probs * weight
                 log_normalizers = log_normalizers * jnp.sum(target_probs, axis=axis)
 
-            losses = -(jnp.sum(target_probs * logits, where=no_ignore.reshape(broadcast_shape), axis=axis) - log_normalizers)# - entropy(target_probs))
+            losses = -(jnp.sum(target_probs * logits, where=no_ignore.reshape(broadcast_shape), axis=axis) - log_normalizers)
         else:
 
             label_logits = jnp.take_along_axis(logits, labels_no_ignore[..., None], axis=axis)[..., 0]
@@ -149,7 +142,7 @@ def softmax_cross_entropy(input, target, weight=None, ignore_index=-100, reducti
     else:
         target_probs = target * (1.0 - label_smoothing) + jnp.ones_like(target)/C * label_smoothing
 
-        logits_max = jnp.max(input, axis=axis, keepdims=True)#, initial=0.0)
+        logits_max = jnp.max(input, axis=axis, keepdims=True)
         logits = input - jax.lax.stop_gradient(logits_max)
 
         log_normalizers = jnp.log(jnp.sum(jnp.exp(logits), axis=axis))
@@ -159,7 +152,7 @@ def softmax_cross_entropy(input, target, weight=None, ignore_index=-100, reducti
             target_probs = target_probs * weight
             log_normalizers = log_normalizers * jnp.sum(target_probs * weight, axis=axis)
 
-        losses = -(jnp.sum(target_probs * logits, axis=axis) - log_normalizers)# + entropy(target_probs))
+        losses = -(jnp.sum(target_probs * logits, axis=axis) - log_normalizers)
 
         
         no_ignore = None

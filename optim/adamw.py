@@ -14,12 +14,12 @@ def AdamW(model_state, lr=1.0, betas=(0.9, 0.999), weight_decay=0.01, eps=1e-8, 
             },
             params
         ),
-        'beta1': betas[0],
-        'beta2': betas[1],
-        'lr_base': lr,
-        'weight_decay': weight_decay,
-        'eps': eps,
-        't': 0
+        'beta1': jnp.array(betas[0]),
+        'beta2': jnp.array(betas[1]),
+        'lr_base': jnp.array(lr),
+        'weight_decay': jnp.array(weight_decay),
+        'eps': jnp.array(eps),
+        't': jnp.array(0)
     }
     
     return state, AdamW_apply
@@ -27,6 +27,7 @@ def AdamW(model_state, lr=1.0, betas=(0.9, 0.999), weight_decay=0.01, eps=1e-8, 
 def AdamW_apply(
     opt_state,
     model_state,
+    example_data,
     value_and_grad_fn,
     lr=1.0,
     params_filter=su.get_params,
@@ -41,7 +42,7 @@ def AdamW_apply(
     opt_state['t'] += 1
     t = opt_state['t']
 
-    (model_state_next, *value), grad = value_and_grad_fn(model_state)
+    (model_state_next, *value), grad = value_and_grad_fn(model_state, example_data)
 
     params, rest = params_filter(model_state_next)
 

@@ -120,7 +120,8 @@ def cosine_annealing(epoch, max_epochs, eta_max, eta_min):
     return (1 + jnp.cos(jnp.pi * epoch / max_epochs)) * (eta_max - eta_min) * 0.5 + eta_min
 
 
-def loss(state, inputs, targets, apply):
+def loss(state, batch, apply):
+    inputs, targets = batch
 
     new_state, output = apply(state, inputs)
 
@@ -128,15 +129,17 @@ def loss(state, inputs, targets, apply):
     return new_state, output, cross_entropy
 
 
-def train_step(state, opt_state, inputs, targets, epoch, apply, opt_step, eta_max=1.0, eta_min=0.0, max_epochs=200):
+def train_step(state, opt_state, batch, epoch, apply, opt_step, eta_max=1.0, eta_min=0.0, max_epochs=200):
 
 
     loss_and_grad = state_value_and_grad(loss, output_num=1)
-    l_t = lambda s: loss_and_grad(s, inputs, targets, apply)
+    l_t = lambda s, b: loss_and_grad(s, b, apply)
 
     lr = cosine_annealing(epoch, max_epochs, eta_max, eta_min)
 
-    opt_state, state, output, cross_entropy = opt_step(opt_state, state, l_t, lr=lr)
+    opt_state, state, output, cross_entropy = opt_step(opt_state, state, batch, l_t, lr=lr)
+
+    inputs, targets = batch
 
     predictions = jnp.argmax(output, axis=-1)
     correct = jnp.sum(predictions == targets)
@@ -150,9 +153,9 @@ def train_step(state, opt_state, inputs, targets, epoch, apply, opt_step, eta_ma
     return state, opt_state, log_data
 
 
-def test_step(state, inputs, targets, apply):
-
-    _, output, cross_entropy = loss(state, inputs, targets, apply)
+def test_step(state, batch, apply):
+    inputs, targets = batch
+    _, output, cross_entropy = loss(state, batch, apply)
     predictions = jnp.argmax(output, axis=-1)
     correct = jnp.sum(predictions == targets)
 
@@ -169,11 +172,13 @@ def train_epoch(epoch, state, opt_state, trainloader, train_step_jit):
     batches = 0
     pbar = tqdm(enumerate(trainloader), total=len(trainloader))
     for batch_idx, (inputs, targets) in pbar:
+        # mildly annoying recast since the torchvision transforms only work on pytorch tensors...
         inputs, targets = inputs.detach_().numpy(), targets.detach_().numpy()
+        batch = (inputs, targets)
 
         num_targets = targets.shape[0]
 
-        state, opt_state, log_data = train_step_jit(state, opt_state, inputs, targets, epoch)
+        state, opt_state, log_data = train_step_jit(state, opt_state, batch, epoch)
 
         cross_entropy = log_data['loss']
         batch_correct = log_data['correct']
@@ -208,8 +213,9 @@ def test(epoch, state, testloader, test_step_jit):
     pbar = tqdm(enumerate(testloader), total=len(testloader))
     for batch_idx, (inputs, targets) in pbar:
         inputs, targets = inputs.detach_().numpy(), targets.detach_().numpy()
+        batch = (inputs, targets)
         num_targets = targets.shape[0]
-        test_loss, batch_correct = test_step_jit(state, inputs, targets)
+        test_loss, batch_correct = test_step_jit(state, batch)
 
         total_loss += test_loss
         batches += 1

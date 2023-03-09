@@ -18,6 +18,7 @@ def apply(structure_tree, global_config, ...) -> structure_tree, Any
 
 
 import jax
+from jax import numpy as jnp
 from jax.tree_util import Partial, tree_map
 
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
@@ -58,6 +59,19 @@ RETURNED_KEYS = [
 
 REQUIRED_KEYS = NON_CHILD_KEYS + [CHILD_KEY]
 
+def uncast_mixed_precision(state, grad):
+    # types = state['buffers']['mixed_precision']['types']
+    loss_scalar = state['buffers']['mixed_precision']['loss_scalar']
+
+    def uncast_and_scale(g, path):# t, path):
+        g = copy_to_leaf(g)
+        # t = copy_to_leaf(t)
+        g['params'] = tree_map(lambda x: x / loss_scalar.astype(x.dtype), g['params'])
+        return g
+
+    return structure_tree_map(uncast_and_scale, grad)#, types)
+        
+
 def state_value_and_grad(fun, output_num=0):
     
     def processed_grad_fn(state, *args, **kwargs):
@@ -67,6 +81,10 @@ def state_value_and_grad(fun, output_num=0):
             state = merge_trees(params, buffers)
             state, *output = fun(state, *args, **kwargs)
             output_to_diff = output[output_num]
+
+            if 'mixed_precision' in state['buffers']:
+                output_to_diff = output_to_diff * state['buffers']['mixed_precision']['loss_scalar']
+
             extra_indices = list(range(len(output)))
             extra_indices.pop(output_num)
             output = [state] + [output[i] for i in extra_indices]
@@ -74,11 +92,17 @@ def state_value_and_grad(fun, output_num=0):
 
         grad_fn = jax.value_and_grad(fun_to_differentiate, has_aux=True)
 
-        (output, (state, *aux_output)), grad = grad_fn(params)
+        (output, (new_state, *aux_output)), grad = grad_fn(params)
+
+        if 'mixed_precision' in new_state['buffers']:
+            mixed_precision = new_state['buffers']['mixed_precision']
+            grad = uncast_mixed_precision(new_state, grad)
+            output = output.astype(mixed_precision['output_type'].dtype) / mixed_precision['loss_scalar'].astype(mixed_precision['output_type'].dtype)
+
 
         final_output = tuple([aux for aux in aux_output[:output_num]] + [output] + [aux for aux in aux_output[output_num:]])
 
-        return (state, *final_output), grad
+        return (new_state, *final_output), grad
 
     return processed_grad_fn
 
@@ -104,6 +128,8 @@ def bind_global_config(aux_and_apply, global_config: dict):
 
 def bind_module(tree: StructureTree, global_config: dict) -> [dict, Callable[[Any], Any]]:
     init_params, aux_and_apply = split_tree(tree, [RETURNED_KEYS,NON_RETURNED_KEYS])
+    init_params = tree_map(lambda x: jnp.array(x), init_params)
+    init_params = tree_map(lambda x: jnp.array(x, dtype=x.dtype), init_params)
 
 
     return init_params, bind_global_config(aux_and_apply, global_config)
@@ -136,6 +162,11 @@ def is_structure_tree(tree, recurse=False):
                 
 
     return True
+
+def copy_to_leaf(node):
+    leaf = {k: v for k,v in node.items()}
+    leaf[CHILD_KEY] = {}
+    return leaf
 
 def children(tree):
     return tree[CHILD_KEY]
@@ -474,7 +505,7 @@ class StateOrganizer:
         global_config = self._global_config
 
         if name in state[CHILD_KEY]:
-            submodule = StateOrganizer(state[CHILD_KEY][name], global_config)
+            submodule = StateOrganizer(state[CHILD_KEY][name], self.get_global_config())
             return submodule
 
         # check if name is unique:
@@ -483,13 +514,24 @@ class StateOrganizer:
         if len(lookup) == 1:
             return state[lookup[0]][name]
 
-        if name in REQUIRED_KEYS:
+        if name in REQUIRED_KEYS and name != CHILD_KEY:
             return state[name]
 
         return super().__getattribute__(name)
 
     def __getitem__(self, name):
         return self.__getattribute__(name)
+
+    def submodules(self):
+        state = self._state
+        return {
+            k: StateOrganizer(state[CHILD_KEY][k], self.get_global_config()) for k in state[CHILD_KEY]
+        }
+
+    def recursive_register_aux(self, name, value):
+        self.register_aux(name, value)
+        for m in self.submodules().values():
+            m.recursive_register_aux(name, value)
     
     def __call__(self, *args, **kwargs):
         state = self._state

@@ -18,6 +18,7 @@ def SGD(model_state, lr=1.0, momentum=0.0, weight_decay=0.0, params_filter=su.ge
 def SGD_apply(
     sgd_state,
     model_state,
+    example_data,
     value_and_grad_fn,
     lr=1.0,
     params_filter=su.get_params,
@@ -28,7 +29,7 @@ def SGD_apply(
     lr = sgd_state['lr_base'] * lr
     weight_decay = sgd_state['weight_decay']
 
-    (model_state_next, *value), grad = value_and_grad_fn(model_state)
+    (model_state_next, *value), grad = value_and_grad_fn(model_state, example_data)
 
     params, rest = params_filter(model_state_next)
 

@@ -473,12 +473,6 @@ def MultiheadAttention_apply(tree, global_config, q, k, v, mask=None):
 
     if mask is not  None:
         broadcast_mask = jnp.broadcast_to(mask[:, :, :T, :T], logits.shape)
-        masked_logits = jnp.where(broadcast_mask, logits, 0.0)
-
-        # x_max = jnp.max(logits, axis=-1, where=broadcast_mask , initial=-jnp.inf, keepdims=True)
-        # unnormalized = jnp.exp(logits - jax.lax.stop_gradient(x_max))
-        # unnormalized = jnp.where(broadcast_mask, unnormalized, 0.0)
-        # att = unnormalized / jnp.sum(unnormalized, axis=-1, where=broadcast_mask, keepdims=True)
 
         att = functional.softmax(logits, axis=-1, where=broadcast_mask) # [B, N, T, T] -> [B, N, T, T]
     else:

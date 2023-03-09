@@ -25,9 +25,23 @@ def AttentionBlock(organizer, config, rng=None):
     embed_dim = config.embed_dim
     num_heads = config.num_heads
     organizer.self_attention = nn.CausalSelfAttention(embed_dim, num_heads)
+
     organizer.ln = nn.LayerNorm(embed_dim)
+
+
     organizer.expand_fc = nn.Linear(embed_dim, 2 * embed_dim)
+
+
     organizer.contract_fc = nn.Linear(2 * embed_dim, embed_dim)
+
+    # organizer.register_aux('force_high_precision', True)
+
+    # organizer.self_attention.recursive_register_aux('force_high_precision', True)
+    # for k, m in organizer.self_attention.MHA.submodules().items():
+    #     m.register_aux('force_high_precision', True)
+    organizer.ln.register_aux('force_high_precision', True)
+    # organizer.expand_fc.register_aux('force_high_precision', True)
+    # organizer.contract_fc.register_aux('force_high_precision', True)
 
     organizer.set_apply(AttentionBlock_apply)
 
@@ -50,15 +64,28 @@ def StackedAttention(organizer, config, rng=None):
     embed_dim = config.embed_dim
     vocab_size = config.vocab_size
 
+
+
     organizer.position_embedding = rng_util.normal(shape=(max_length, embed_dim))
     organizer.token_embedding = nn.Embedding(vocab_size, embed_dim)
+
+
 
     organizer.trunk = nn.Sequential(*[
         AttentionBlock(config) for _ in range(num_layers)
     ])
 
+    organizer.ln = nn.LayerNorm(embed_dim)
+
+
     organizer.head = nn.Linear(embed_dim, vocab_size)
 
+
+    # organizer.register_aux('force_high_precision', True)
+    # organizer.token_embedding.register_aux('force_high_precision', True)
+    # organizer.trunk.register_aux('force_high_precision', True)
+    organizer.ln.register_aux('force_high_precision', True)
+    # organizer.head.register_aux('force_high_precision', True)
     organizer.set_apply(StackedAttention_apply)
 
 
@@ -76,7 +103,9 @@ def StackedAttention_apply(organizer, tokens):
 
     final_embed = organizer.trunk(combined_embed)
 
-    final_logits = organizer.head(final_embed)
+    final_ln = organizer.ln(final_embed)
+
+    final_logits = organizer.head(final_ln)
 
     return final_logits
 

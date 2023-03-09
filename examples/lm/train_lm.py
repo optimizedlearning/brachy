@@ -9,7 +9,7 @@ import wandb
 from tqdm import tqdm
 import jax
 from jax import numpy as jnp
-from jax.tree_util import tree_map, Partial
+from jax.tree_util import tree_map, Partial, tree_reduce
 import time
 
 import transformers
@@ -20,7 +20,9 @@ import sys
 
 sys.path.append('.')
 import structure_util as su
-from optim.adamw import AdamW
+# from optim.adamw import AdamW
+import optim
+# from optim.mixed_precision import mixed_precision
 from optional_module import optional_module
 import functional as F
 from optional_module import optional_module
@@ -33,6 +35,9 @@ parser.add_argument('--config', default='examples/lm/config/c4lm_conf.yaml', typ
 parser.add_argument('--wandb', '-w', action='store_true',
                     help='use wandb logging')
 
+def is_number(tree):
+    return tree_reduce(lambda x,y: jnp.logical_and(jnp.logical_and(x, jnp.logical_not(jnp.any(jnp.isnan(y)))), jnp.any(jnp.isfinite(y))) , tree, True)
+
 def main():
     args = parser.parse_args()
     global wandb
@@ -42,32 +47,29 @@ def main():
 
     # jax random numbers seem to cause the huggingface "fast" tokenizers to complain about the process being forked.
     # I have no idea why... it seems unlikely that the prng is actually forking the process but I have not checked the code or anything.
-    # anywy, this is why we use the non-"fast"    
+    # anyway, this is why we use the non-"fast" tokenizer below. 
     # tokenizer = transformers.GPTNeoXTokenizerFast.from_pretrained('EleutherAI/gpt-neox-20b')
     tokenizer = transformers.GPT2Tokenizer.from_pretrained('gpt2')
     tokenizer.pad_token = tokenizer.eos_token
-    # # huggingface seems to recommend making the pad token some english-readable thing like "<|padtoken|>".
-    # # This seems bad to me: if the training set is the internet including huggingface documentation, then
-    # # the pad token will naturally appear in the training set, and I want to use the pad token as a marker
-    # # to not compute the softmax loss on a token, so it is important that it not show up in the training set.
-    # # To avoid this, I choose something more bizarre:
-    # pad_token_string = '4P$2A|7D_6D-0I]1N/0G'
 
-    # tokenizer.add_special_tokens({'pad_token': pad_token_string})
-    # pad_token = tokenizer(pad_token_string)['input_ids'][0]
-    
     config.model.vocab_size = tokenizer.vocab_size
 
 
     print("Initializing model...")
     rng = jax.random.PRNGKey(0)
     model_tree, model_config = StackedAttention(config.model, rng=rng)
+    
+    if config.train.mixed_precision:
+        model_tree = optim.add_mixed_precision(model_tree, config.train.mixed_precision_scalar)
+
     model_state, model_apply = su.bind_module(model_tree, model_config)
 
 
     print("Initializing optimizer...")
     optconf = config.train.optimizer
-    opt_state, opt_apply = AdamW(model_state, lr=1.0, betas=optconf.betas, weight_decay=optconf.weight_decay)
+    opt_state, opt_apply = optim.process_grads.clip_grads(
+        optim.AdamW(model_state, lr=1.0, betas=optconf.betas, weight_decay=optconf.weight_decay),
+        clip_value=config.train.optimizer.clip, clip_type='per_coordinate')
 
     print("Setting up dataloader...")
     train_loader = load_c4_data(config, tokenizer)
@@ -87,7 +89,8 @@ def main():
 
 
 
-def loss(model_state, model_apply, inputs, targets):
+def loss(model_state, model_apply, batch):
+    inputs, targets = batch
 
     model_state, outputs = model_apply(model_state, inputs)
 
@@ -107,11 +110,13 @@ def train_step(
 
     loss_and_grad = su.state_value_and_grad(loss, output_num=0)
 
-    l_t = lambda s: loss_and_grad(s, model_apply, inputs, targets)
+    def l_t(s, b):
+        val, grad = loss_and_grad(s, model_apply, b)
+        return val, grad
 
     lr = lr_scheduler(token_count)
 
-    opt_state, model_state, cross_entropy, outputs = opt_apply(opt_state, model_state, l_t, lr=lr)
+    opt_state, model_state, cross_entropy, outputs = opt_apply(opt_state, model_state, (inputs, targets), l_t, lr=lr)
 
     predictions = jnp.argmax(outputs, axis=-1)
 
@@ -169,15 +174,18 @@ def train_loop(
     train_step_jit = jax.jit(train_step_partial)
 
     # statistics to track during training.
-    token_count = 0
+    token_count = jnp.array(0.0) # this prevents the jit from tracing again in the second round.
     total_correct = 0
+    total_loss = 0.0
     running_loss = 0.0
+    running_accuracy = 0.0
 
     # timestamp markers to throttle log frequency and record training speed.
     last_log_time = 0
     last_token_count = 0
 
     pbar = tqdm(enumerate(train_loader))
+
     for batch_idx, batch in pbar:
 
         inputs = jnp.array(batch['input_ids'])
@@ -185,11 +193,17 @@ def train_loop(
 
         tokens = jnp.sum(targets != -100)
 
+        old_opt_state = opt_state
+        old_model_state = model_state
         opt_state, model_state, log_data = train_step_jit(opt_state, model_state, inputs, targets, token_count)
+    
 
-        token_count += tokens
-        total_correct += log_data['correct']
-        running_loss += (log_data['loss'] - running_loss)*tokens/(token_count)
+        if is_number(log_data['loss']):
+            token_count += tokens
+            total_correct += log_data['correct']
+            total_loss += log_data['loss'].astype(jnp.float32) * tokens
+            running_loss = total_loss/token_count
+            running_accuracy = total_correct/token_count
 
 
         curtime = time.time()
@@ -210,8 +224,8 @@ def train_loop(
             last_token_count = token_count
             wandb.log(log_data)
 
-        pbar.set_description('Batch: %d, Running Loss: %.3f | Running Acc: %.3f%% (%d/%d)'
-                     % (batch_idx, running_loss, 100.*total_correct/token_count, total_correct, token_count))
+        pbar.set_description('Batch: %d, Current loss: %.3f, Running Loss: %.3f | Running Acc: %.3f%% (%d/%d)'
+                     % (batch_idx, log_data['loss'], running_loss, 100.*running_accuracy, total_correct, token_count))
 
         if tokens >= config.train.max_tokens:
             return

@@ -73,9 +73,9 @@ class TestSGD(unittest.TestCase):
         @jax.jit
         def train_step(sgd_state, state, x):
             value_grad_fn = su.state_value_and_grad(apply)
-            (state, value), grad = value_grad_fn(state, x)
-            l_t = lambda state: value_grad_fn(state, x)
-            return sgd_apply(sgd_state, state, l_t, lr=1.0)
+            # (state, value), grad = value_grad_fn(state, x)
+            # l_t = lambda state: value_grad_fn(state, x)
+            return sgd_apply(sgd_state, state, x, value_grad_fn, lr=1.0)
 
 
         sgd_t = torch.optim.SGD(t_module.parameters(), lr=0.001, momentum=0.9, weight_decay=0.1)
@@ -113,9 +113,12 @@ class TestSGD(unittest.TestCase):
         @jax.jit
         def train_step(opt_state, state, x):
             value_grad_fn = su.state_value_and_grad(apply)
-            (state, value), grad = value_grad_fn(state, x)
-            l_t = lambda state: value_grad_fn(state, x)
-            return opt_apply(opt_state, state, l_t, lr=1.0)
+            # (state, value), grad = value_grad_fn(state, x)
+            # l_t = lambda state: value_grad_fn(state, x)
+            return opt_apply(opt_state, state, x, value_grad_fn, lr=1.0)
+            # (state, value), grad = value_grad_fn(state, x)
+            # l_t = lambda state: value_grad_fn(state, x)
+            # return opt_apply(opt_state, state, l_t, lr=1.0)
 
 
         opt_t = torch.optim.AdamW(t_module.parameters(), lr=0.001)
