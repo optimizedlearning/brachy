@@ -1,7 +1,3 @@
-
-
-
-
 import os
 import argparse
 
@@ -20,11 +16,9 @@ import sys
 
 sys.path.append('.')
 import structure_util as su
-# from optim.adamw import AdamW
 import optim
-# from optim.mixed_precision import mixed_precision
-from optional_module import optional_module
-import functional as F
+from nn import functional as F
+
 from optional_module import optional_module
 import c4_loader 
 
