@@ -23,9 +23,9 @@ def randomly_scale_apply(
     distribution,
     subopt_apply,
     *args,
-    **kwargs
     params_filter=su.get_params,
-    params_merger=su.merge_trees):
+    params_merger=su.merge_trees,
+    **kwargs):
 
     prev_true_iterate = opt_state['true_iterate']
 

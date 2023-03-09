@@ -464,18 +464,98 @@ class TestStructureUtils(unittest.TestCase):
 
         assert jnp.allclose(y_second, jnp.array([-2, 11, 32, 63, 216]))
 
+    def test_jit(self):
+
+        trace_count = 0
+
+        def func(x, y, z, w, q):
+            nonlocal trace_count
+            trace_count += 1
+            if z['x']['y']:
+                return x + w[3] + q
+            else:
+                if y['a']:
+                    return -x - w[1] - q
+                else:
+                    return x
+        j_func = su.jit(func, static_argnums=1, static_argnames=('z','w'))
+
+        x = jnp.ones(1)
+        other_x = jnp.zeros(1)
+        q = jnp.ones(1)
+        other_q = jnp.zeros(1)
+        y = {
+            'a': True
+        }
+        z = {
+            'x': {
+                'y': True
+            }
+        }
+        w = [1,2,3,4]
+
+        a = j_func(x, y, z, w, q)
+        assert jnp.allclose(a, 6), f"a value: {a}"
+        assert trace_count == 1, f"trace count: {trace_count}"
+
+        a = j_func(other_x, y, z, w, other_q)
+        assert jnp.allclose(a, 4), f"a value: {a}"
+        assert trace_count == 1, f"trace count: {trace_count}"
+
+        z['x']['y'] = False
+
+        a = j_func(other_x, y, z, w, other_q)
+        assert jnp.allclose(a, -2), f"a value: {a}"
+        assert trace_count == 2, f"trace count: {trace_count}"
+
+        other_y = {
+            'a': True
+        }
+
+        other_z ={
+            'x': {
+                'y': False
+            }
+        }
+
+        a = j_func(other_x, other_y, other_z, w, other_q)
+        assert jnp.allclose(a, -2), f"a value: {a}"
+        assert trace_count == 2, f"trace count: {trace_count}"
+
+        other_z['p'] = 5
+        a = j_func(other_x, other_y, other_z, w, other_q)
+        assert jnp.allclose(a, -2), f"a value: {a}"
+        assert trace_count == 3, f"trace count: {trace_count}"
+
+        a = j_func(other_x, other_y, z=other_z, w=w, q=other_q)
+        assert jnp.allclose(a, -2), f"a value: {a}"
+        assert trace_count == 4, f"trace count: {trace_count}"
+
+        other_y['a'] = False
+        a = j_func(other_x, other_y, z=other_z, w=w, q=other_q)
+        assert jnp.allclose(a, 0), f"a value: {a}"
+        assert trace_count == 5, f"trace count: {trace_count}"
 
 
-    def test_is_jax_type(self):
-        complex_no = {'p': jax.tree_util.Partial(su.is_jax_type), 'l': {'p': jax.random.PRNGKey(8), 'm': jax.numpy.array([1,2,3,4]), 'o': 'p'}, 'p': 0}
-        complex_yes = {'p': jax.tree_util.Partial(su.is_jax_type), 'l': {'p': jax.random.PRNGKey(8), 'm': jax.numpy.array([1,2,3,4]), 'o': False}, 'p': 0, 'n': None}
+        other_y = {
+            'a': False
+        }
+        a = j_func(x, other_y, z=other_z, w=w, q=other_q)
+        assert jnp.allclose(a, 1), f"a value: {a}"
+        assert trace_count == 5, f"trace count: {trace_count}"
+
+
+
+    def test_is_jax_tree(self):
+        complex_no = {'p': jax.tree_util.Partial(su.is_jax_tree), 'l': {'p': jax.random.PRNGKey(8), 'm': jax.numpy.array([1,2,3,4]), 'o': 'p'}, 'p': 0}
+        complex_yes = {'p': jax.tree_util.Partial(su.is_jax_tree), 'l': {'p': jax.random.PRNGKey(8), 'm': jax.numpy.array([1,2,3,4]), 'o': False}, 'p': 0, 'n': None}
         simple_no = 'p'
         simple_yes = jnp.array([1])
 
-        assert not su.is_jax_type(complex_no)
-        assert not su.is_jax_type(simple_no)
-        assert su.is_jax_type(complex_yes)
-        assert su.is_jax_type(simple_yes)
+        assert not su.is_jax_tree(complex_no)
+        assert not su.is_jax_tree(simple_no)
+        assert su.is_jax_tree(complex_yes)
+        assert su.is_jax_tree(simple_yes)
 
     def test_organizer(self):
         tree, g_config = root_module()

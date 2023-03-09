@@ -1,4 +1,3 @@
-
 model:
   num_layers: 12
   embed_dim: 768

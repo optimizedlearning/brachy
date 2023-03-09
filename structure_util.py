@@ -19,12 +19,18 @@ def apply(structure_tree, global_config, ...) -> structure_tree, Any
 
 import jax
 from jax import numpy as jnp
-from jax.tree_util import Partial, tree_map
+from jax.tree_util import Partial, tree_map, tree_flatten, tree_reduce
+from jax._src.core import valid_jaxtype
 
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
-from typing import overload, Any, Callable, Literal, Optional, Sequence, Tuple, Union
+import typing
+from typing import (Any, Callable, Generator, Hashable, Iterable, List, Literal,
+                    NamedTuple, Optional, Sequence, Tuple, TypeVar, Union,
+                    overload, cast)
+AxisName = Hashable
 
 import rng_util
+from json import dumps, loads
 
 import inspect
 
@@ -58,6 +64,174 @@ RETURNED_KEYS = [
 ]
 
 REQUIRED_KEYS = NON_CHILD_KEYS + [CHILD_KEY]
+
+
+def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
+        outnum: int = 0, has_aux: bool = False, holomorphic: bool = False,
+        allow_int: bool = False,
+        reduce_axes: Sequence[AxisName] = ()) -> Callable:
+    if outnum == 0:
+        return jax.value_and_grad(fun, argnums, has_aux, holomorphic, allow_int, reduce_axes)
+    
+    def reorded_fun(*args, **kwargs):
+        output = fun(*args, **kwargs)
+
+        output_to_diff = output[outnum]
+
+        other_indices = list(range(len(output)))
+        other_indices.pop(output_num)
+    
+        other_outputs = [output[i] for i in extra_indices]
+        reordeded_output = output[outnum], tuple(other_outputs)
+
+    raw_value_and_grad_fn = jax.value_and_grad(reordered_fun, argnums, True, holomorphic, allow_int, reduce_axes)
+
+
+    def value_and_grad_fn(*args, **kwargs):
+        (output, aux_output), grad = raw_value_and_grad_fn(*args, **kwargs)
+
+
+        final_output = tuple([aux for aux in aux_output[:output_num]] + [output] + [aux for aux in aux_output[output_num:]])
+
+        return final_output, grad
+
+class HashableTree:
+    def __init__(self, tree):
+        self.tree = tree
+        # we save the current hash of the tree here, so that future in-place changes to the tree
+        # which might change the hash cannot fool us...
+        self.hash = self.hash_tree()
+    
+    def hash_tree(self):
+        leaves, treedef = tree_flatten(self.tree)
+        leaves = tuple(leaves)
+        return hash((leaves, treedef))
+
+    def __hash__(self):
+        # add 1 to the hash so that nobody sneaky can construct the following tuple
+        # to engineer a collision (probably not a big deal, but anyway...)
+        return hash((self.hash, self.hash_tree())) + 1
+    
+    def __eq__(self, other):
+        # technically, this equality could return False for trees that are
+        # really the same if they started out different and then were
+        # modified in place to become the same.
+        # However, a false negative will only result in an unecessary recompilation
+        # while a false positive will result in reusing an incorrect cached jitted function.
+
+        if not isinstance(other, HashableTree):
+            return False
+        eq = self.hash == other.hash
+        if not eq:
+            return False
+        try:
+            eq = tree_reduce(lambda a,b: a and b, tree_map(lambda x,y: x==y, self.tree, other.tree), True)
+        except:
+            return False
+        
+        return eq
+
+    def __str__(self):
+        return f"HashableTree<{self.tree}>"
+
+# Caution: the jit signature will change in version 0.4.x ... 
+def jit(
+    fun: Callable,
+    *,
+    static_argnums: Union[int, Sequence[int], None] = None,
+    static_argnames: Union[Any, None] = None,
+    device=None,
+    backend=None,
+    donate_argnums: Union[int, Sequence[int]] = (),
+    inline=False,
+    keep_unused: bool = False,
+    abstracted_axes=None):
+
+    if isinstance(static_argnums, int):
+        static_argnums = [static_argnums]
+    if isinstance(static_argnames, str):
+        static_argnames = [static_argnames]
+    
+    if static_argnums is None:
+        static_argnums = []
+    if static_argnames is None:
+        static_argnames = []
+
+    static_argnums = list(static_argnums)
+    static_argnames = list(static_argnames)
+
+
+    signature = inspect.signature(fun)
+    parameters = signature.parameters
+    parameter_list = list(parameters.keys())
+
+    for name in static_argnames:
+        num = parameter_list.index(name)
+        if num not in static_argnums:
+            if parameters[name].kind != parameters[name].KEYWORD_ONLY:
+                static_argnums.append(num)
+    
+    for num in static_argnums:
+        name = parameter_list[num]
+        if name not in static_argnames:
+            if parameters[name].kind != parameters[name].POSITIONAL_ONLY:
+                static_argnames.append(name) 
+
+  
+    def untransform_arg(arg):
+        if isinstance(arg, HashableTree):
+            return arg.tree
+        return arg
+
+    def jitable_fun(*args, **kwargs):
+        args = [untransform_arg(arg) for arg in args]
+        kwargs = {
+            k: untransform_arg(v) for k,v in kwargs.items()
+        }
+
+        return fun(*args, **kwargs)
+
+    jitted_fun = jax.jit(
+        jitable_fun,
+        static_argnums=static_argnums,
+        static_argnames=static_argnames,
+        donate_argnums=donate_argnums,
+        keep_unused=keep_unused,
+        device=device,
+        backend=backend,
+        inline=inline,
+        abstracted_axes=abstracted_axes)
+
+    def hashable(x):
+        return isinstance(x, Hashable)
+
+
+    def transform_arg(arg, argnum=None, argname=None):
+        if argname is None:
+            argname = parameter_list[argnum]
+        if argnum is None:
+            argnum = parameter_list.index(argname)
+
+        if argname not in static_argnames and argnum not in static_argnums:
+            return arg
+
+        if hashable(arg):
+            return arg
+        
+        return HashableTree(arg)
+
+    def wrapped_jit(*args, **kwargs):
+        args = [transform_arg(arg, argnum=argnum) for argnum, arg in enumerate(args)]
+        kwargs = {
+            k: transform_arg(v, argname=k) for k,v in kwargs.items()
+        }
+
+        return jitted_fun(*args, **kwargs)
+
+    return wrapped_jit
+
+
+
 
 def uncast_mixed_precision(state, grad):
     # types = state['buffers']['mixed_precision']['types']
@@ -107,12 +281,16 @@ def state_value_and_grad(fun, output_num=0):
     return processed_grad_fn
 
 
+
 def apply_tree(tree: StructureTree, global_config: dict, *args, **kwargs) -> [StructureTree, PyTree]:
     return tree['apply'](tree, global_config, *args, **kwargs)
 
-# def apply(params: PyTree, buffers: PyTree, aux: dict, apply: dict, global_config: dict, *args, **kwargs) -> [StructureTree, PyTree]:
-#     tree = merge_trees(params, buffers, aux, apply)
-#     return apply_tree(tree, global_config, *args, **kwargs)
+def apply_and_update_tree(tree: StructureTree, global_config: dict, *args, **kwargs) -> [StructureTree, PyTree]:
+    next_tree, *x = tree['apply'](tree, global_config, *args, **kwargs)
+    next_tree = update_tree(tree, next_tree)
+    return next_tree, *x
+
+
 
 def bind_global_config(aux_and_apply, global_config: dict):
     organizer = StateOrganizer(aux_and_apply)
@@ -257,6 +435,14 @@ def empty_tree(tree=None):
     return structure_tree_map(lambda t, path=None: {k:v for k, v in empty.items()}, tree)
 
 @Partial
+def update_tree(tree, next_tree):
+    return merge_trees(tree, next_tree, keys_to_override=RETURNED_KEYS)
+
+@Partial
+def get_tree_update(tree):
+    return filter_keys(tree, *RETURNED_KEYS)
+
+@Partial
 def merge_trees(*trees, keys_to_merge=NON_CHILD_KEYS, keys_to_override=NON_CHILD_KEYS):
 
     if len(trees) == 0:
@@ -325,15 +511,16 @@ def _is_valid_submodule(v):
 
 
 #THIS FEELS SUPER HACKY
-def is_jax_type(x):
-    @jax.jit
-    def jitted_id(a):
-        return tree_map(lambda b: b, a)
-    try:
-        jitted_id(x)
-    except:
-        return False
-    return True
+def is_jax_tree(x):
+    return tree_reduce(lambda a,b: a and valid_jaxtype(b), x, True)
+    # @jax.jit
+    # def jitted_id(a):
+    #     return tree_map(lambda b: b, a)
+    # try:
+    #     jitted_id(x)
+    # except:
+    #     return False
+    # return True
 
 
 def merge_configs(*configs):
@@ -600,7 +787,7 @@ class StateOrganizer:
             # if you try to make a function attribute, we will create a new submodule
             # for it.
             self.register_submodule(name, create_tree_from_func(value))
-        elif is_jax_type(value):
+        elif is_jax_tree(value):
             # by default we put things in params if they are jittable
             state['params'][name] = value
             return value
