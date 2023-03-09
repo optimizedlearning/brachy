@@ -177,6 +177,8 @@ def jit(
             if parameters[name].kind != parameters[name].POSITIONAL_ONLY:
                 static_argnames.append(name) 
 
+    static_argnames.append('_structure_tree_statics_')
+
   
     def untransform_arg(arg):
         if isinstance(arg, HashableTree):
@@ -188,6 +190,13 @@ def jit(
         kwargs = {
             k: untransform_arg(v) for k,v in kwargs.items()
         }
+        for k,v in kwargs['_structure_tree_statics_'].items():
+            if isinstance(k, int):
+                args[k] = merge_trees(args[k], v)
+            else:
+                kwargs[k] = merge_trees(kwargs[k], v)
+        
+        del kwargs['_structure_tree_statics_']
 
         return fun(*args, **kwargs)
 
@@ -206,7 +215,7 @@ def jit(
         return isinstance(x, Hashable)
 
 
-    def transform_arg(arg, argnum=None, argname=None):
+    def make_hashable(arg, argnum=None, argname=None):
         if argname is None:
             argname = parameter_list[argnum]
         if argnum is None:
@@ -221,10 +230,34 @@ def jit(
         return HashableTree(arg)
 
     def wrapped_jit(*args, **kwargs):
-        args = [transform_arg(arg, argnum=argnum) for argnum, arg in enumerate(args)]
+
+        split_args = []
+        structure_tree_statics = {}
+        for argnum, arg in enumerate(args):
+            if not is_structure_tree(arg):
+                split_args.append(arg)
+                continue
+            params_buffers, rest = split_tree(arg, [RETURNED_KEYS, NON_RETURNED_KEYS])
+            split_args.append(params_buffers)
+            structure_tree_statics[argnum] = rest
+
+        split_kwargs = {}
+        for k, v in kwargs.items():
+            if not is_structure_tree(v):
+                split_kwargs[k] = v
+                continue
+            params_buffers, rest = split_tree(v, [RETURNED_KEYS, NON_RETURNED_KEYS])
+            split_kwargs[k] = params_buffers
+            structure_tree_statics[k] = rest           
+
+            
+                
+
+        args = [make_hashable(arg, argnum=argnum) for argnum, arg in enumerate(split_args)]
         kwargs = {
-            k: transform_arg(v, argname=k) for k,v in kwargs.items()
+            k: make_hashable(v, argname=k) for k,v in split_kwargs.items()
         }
+        kwargs['_structure_tree_statics_'] = HashableTree(structure_tree_statics)
 
         return jitted_fun(*args, **kwargs)
 
@@ -244,7 +277,50 @@ def uncast_mixed_precision(state, grad):
         return g
 
     return structure_tree_map(uncast_and_scale, grad)#, types)
+
+# TODO: allow a list of argnums
+def tree_value_and_grad(
+    fun: Callable,
+    output_num: int=0,
+    argnums: int=0,
+    split_fn = lambda x: split_tree(x, ['params', ['buffers', 'aux', 'apply']]),
+    merge_fn = lambda x, y: merge_trees(x, y)
+    ):
+    def fun_to_differentiate(*args, **kwargs):
+        args = list(args)
+        args[argnums] = merge_trees(args[argnums], kwargs['_structure_tree_nondiff_'])
+        del kwargs['_structure_tree_nondiff_']
         
+        tree, *output = fun(*args, **kwargs)
+        output_to_diff = output[output_num]
+
+        if 'mixed_precision' in tree['buffers']:
+            output_to_diff = output_to_diff * tree['buffers']['mixed_precision']['loss_scalar']
+
+        extra_indices = list(range(len(output)))
+        extra_indices.pop(output_num)
+        output = [tree] + [output[i] for i in extra_indices]
+        return output_to_diff,  tuple(output)
+       
+
+    prelim_value_and_grad_fn = jax.value_and_grad(fun_to_differentiate, argnums=argnums, has_aux=True)
+
+    def value_and_grad_fn(*args, **kwargs):
+        args = list(args)
+        tree, rest = split_fn(args[argnums])
+        kwargs['_structure_tree_nondiff_'] = rest
+        args[argnums] = tree
+        (output, (new_tree, *aux_output)), grad = prelim_value_and_grad_fn(*args, **kwargs)
+        if 'mixed_precision' in new_tree['buffers']:
+            mixed_precision = new_tree['buffers']['mixed_precision']
+            grad = uncast_mixed_precision(new_tree, grad)
+            output = output.astype(mixed_precision['output_type'].dtype) / mixed_precision['loss_scalar'].astype(mixed_precision['output_type'].dtype)  
+
+        final_output = tuple([aux for aux in aux_output[:output_num]] + [output] + [aux for aux in aux_output[output_num:]])
+
+        return (new_tree, *final_output), grad
+
+    return value_and_grad_fn 
 
 def state_value_and_grad(fun, output_num=0):
     

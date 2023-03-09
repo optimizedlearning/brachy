@@ -464,6 +464,46 @@ class TestStructureUtils(unittest.TestCase):
 
         assert jnp.allclose(y_second, jnp.array([-2, 11, 32, 63, 216]))
 
+    def test_jit_tree(self):
+
+        trace_count = 0
+
+        @su.jit
+        def func(tree, global_config, x):
+            nonlocal trace_count
+            trace_count += 1
+            organizer = su.StateOrganizer(tree, global_config)
+            y = jnp.matmul(x, organizer.weight)+ organizer.bias
+            return organizer.get_state_update(), y
+
+        lin, global_config = nn.Linear(5,5, rng=jax.random.PRNGKey(0))
+        lin['params']['weight'] = jnp.eye(5)
+        lin['params']['bias'] = jnp.ones(5)
+        x = jnp.ones(5)
+
+
+        update, y = func(lin, global_config, x)
+        lin = su.merge_trees(lin, update)
+        update, y = func(lin, global_config, x)
+
+        assert jnp.allclose(y, 2*jnp.ones(5)), f"y was: {y}"
+        assert trace_count == 1, f"trace count was: {trace_count}"
+
+        @su.jit
+        def loss(tree, global_config, x):
+            state, y = func(tree, global_config, x)
+            return state, jnp.sum(y**2)
+
+
+        value_and_grad = su.tree_value_and_grad(loss)
+
+        (update, value), grad = value_and_grad(lin, global_config, x)
+
+        assert jnp.allclose(value, 20)
+        assert jnp.allclose(grad['params']['bias'], 2*2*jnp.ones(5)), f"bias: {grad['params']['bias']}"
+        assert jnp.allclose(grad['params']['weight'], 2*2*jnp.ones((5,5))), f"bias: {grad['params']['bias']}"
+
+
     def test_jit(self):
 
         trace_count = 0
