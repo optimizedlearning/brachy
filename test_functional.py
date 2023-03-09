@@ -21,6 +21,20 @@ def t_to_np(tensor):
 
 class TestFunctional(unittest.TestCase):
 
+    def test_chain(self):
+        rng = jax.random.PRNGKey(0)
+        lin = nn.Linear(5,5, bias=False, rng=rng)
+        lin[0]['params']['weight'] = 2*jnp.eye(5)
+
+        tree, g_config = F.chain(lin, lambda x: x**2, lambda x: jnp.sum(x))
+
+        x = jnp.ones(5)
+
+        _, y = tree['apply'](tree, g_config, x)
+
+        assert jnp.allclose(y, 20)
+
+
 
     def test_accuracy(self):
         x = jnp.array([[1.0, 4.2, 3.4], [0.2,12,1.0], [-2,100,-2]], dtype=float)

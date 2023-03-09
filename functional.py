@@ -10,7 +10,11 @@ from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from typing import overload, Any, Callable, Literal, Optional, Sequence, Tuple, Union
 
 
-def chain(base_tree, global_config, *funcs):
+def chain(base_tree, *funcs):
+    if isinstance(base_tree, tuple):
+        base_tree, global_config = base_tree
+    else:
+        global_config = {}
     funcs = [_ for _ in funcs] # copy list so that it cannot be modified in place later and change behavior by accident
     def apply(tree, global_config, *args, **kwargs):
         base_tree = tree['submodules']['base_tree']
