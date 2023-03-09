@@ -34,14 +34,11 @@ def AttentionBlock(organizer, config, rng=None):
 
     organizer.contract_fc = nn.Linear(2 * embed_dim, embed_dim)
 
-    # organizer.register_aux('force_high_precision', True)
-
-    # organizer.self_attention.recursive_register_aux('force_high_precision', True)
-    # for k, m in organizer.self_attention.MHA.submodules().items():
-    #     m.register_aux('force_high_precision', True)
+    # when training with mixed precision, the layer norms seem to have some
+    # numerical instability. If we turn off mixed precision training only for the
+    # layer norms, then the model trains properly, and each iteration is >2x faster
+    # than the full precision model.
     organizer.ln.register_aux('force_high_precision', True)
-    # organizer.expand_fc.register_aux('force_high_precision', True)
-    # organizer.contract_fc.register_aux('force_high_precision', True)
 
     organizer.set_apply(AttentionBlock_apply)
 
@@ -81,11 +78,9 @@ def StackedAttention(organizer, config, rng=None):
     organizer.head = nn.Linear(embed_dim, vocab_size)
 
 
-    # organizer.register_aux('force_high_precision', True)
-    # organizer.token_embedding.register_aux('force_high_precision', True)
-    # organizer.trunk.register_aux('force_high_precision', True)
     organizer.ln.register_aux('force_high_precision', True)
-    # organizer.head.register_aux('force_high_precision', True)
+
+    
     organizer.set_apply(StackedAttention_apply)
 
 
