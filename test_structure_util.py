@@ -504,6 +504,18 @@ class TestStructureUtils(unittest.TestCase):
         assert jnp.allclose(grad['params']['weight'], 2*2*jnp.ones((5,5))), f"bias: {grad['params']['bias']}"
 
 
+        def non_jittable_loss(tree, global_config, x):
+            organizer = su.StateOrganizer(tree, global_config)
+            y = jnp.matmul(x, organizer.weight)+ organizer.bias
+            return organizer.get_state(), jnp.sum(y**2)
+
+        value_and_grad = su.tree_value_and_grad(non_jittable_loss)
+        (update, value), grad = value_and_grad(lin, global_config, x)
+
+        assert jnp.allclose(value, 20)
+        assert jnp.allclose(grad['params']['bias'], 2*2*jnp.ones(5)), f"bias: {grad['params']['bias']}"
+        assert jnp.allclose(grad['params']['weight'], 2*2*jnp.ones((5,5))), f"bias: {grad['params']['bias']}"
+
     def test_jit(self):
 
         trace_count = 0

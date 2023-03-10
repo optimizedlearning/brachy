@@ -556,8 +556,14 @@ def split_tree(tree, key_sets=NON_CHILD_KEYS):
     else:
         key_sets = [[s] if isinstance(s, str) else s for s in key_sets]
 
+    def get_keys(node, s):
+        if s is None:
+            return {key: node[key] for key in node if key != CHILD_KEY}
+        else:
+            return {key: node[key] for key in s}
+
     def split_func(node, path=None):
-        return tuple({key: node[key] for key in s} for s in key_sets)
+        return tuple(get_keys(node, s) for s in key_sets)
 
     return structure_tree_map(split_func, tree)
 
@@ -625,14 +631,15 @@ def fill_tree_from_torch_module(tree, torch_module, get_grad=False):
     def extract_params(node, path):
         module = torch_module
         for name in path:
-            # print('name: ',name)
             if isinstance(name, int):
                 module = module[name]
             else:
                 module = getattr(module, name)
         new_node = {
-            key: {subkey: value for subkey, value in node[key].items()} for key in node if key != CHILD_KEY
+            key: {subkey: value for subkey, value in node[key].items()} for key in node if key != CHILD_KEY and isinstance(node[key], dict)
         }
+        if 'apply' in node:
+            new_node['apply'] =  node['apply']
         param_process = lambda x: x
         if get_grad:
             param_process = lambda x: x.grad
@@ -736,6 +743,9 @@ class StateOrganizer:
 
     def get_state(self):
         return self._state
+    
+    def get_tree(self):
+        return self._state
 
     def get_state_update(self):
         return filter_keys(self._state)
@@ -811,6 +821,8 @@ class StateOrganizer:
 
         return output
     
+    def update_tree(self, update):
+        self._state.update(merge_trees(self._state, update))
 
     def register_parameter(self, name, value):
         self._state['params'][name] = value

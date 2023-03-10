@@ -65,17 +65,19 @@ class TestSGD(unittest.TestCase):
 
         tree, global_config = simple_ff(rng=rng)
 
-        state, apply = su.bind_module(tree, global_config)
-        state = su.fill_tree_from_torch_module(state, t_module)
+        # state, apply = su.bind_module(tree, global_config)
+        tree = su.fill_tree_from_torch_module(tree, t_module)
 
-        sgd_state, sgd_apply = SGD(state, lr=0.001, momentum=0.9, weight_decay=0.1)
+        tree, global_config = SGD((tree, global_config), lr=0.001, momentum=0.9, weight_decay=0.1)
 
-        @jax.jit
-        def train_step(sgd_state, state, x):
-            value_grad_fn = su.state_value_and_grad(apply)
+
+        def train_step(tree, global_config, x):
+            value_grad_fn = su.tree_value_and_grad(tree['submodules']['model_to_optimize']['apply'])
             # (state, value), grad = value_grad_fn(state, x)
             # l_t = lambda state: value_grad_fn(state, x)
-            return sgd_apply(sgd_state, state, x, value_grad_fn, lr=1.0)
+            return su.apply_tree(tree, global_config, x, value_grad_fn, lr=1.0)
+
+        train_step = su.jit(train_step, static_argnums=1)
 
 
         sgd_t = torch.optim.SGD(t_module.parameters(), lr=0.001, momentum=0.9, weight_decay=0.1)
@@ -85,7 +87,8 @@ class TestSGD(unittest.TestCase):
             x = jnp.ones(shape=(4,3,5,4)) * jnp.sqrt(i+1)
             x_t = torch.tensor(np.array(x))
             
-            sgd_state, state, value = train_step(sgd_state, state, x)
+            tree_update, value = train_step(tree, global_config, x)
+            tree = su.merge_trees(tree, tree_update)
 
             sgd_t.zero_grad()
             value_t = t_module(x_t)
@@ -105,20 +108,16 @@ class TestSGD(unittest.TestCase):
 
         tree, global_config = simple_ff(rng=rng)
 
-        state, apply = su.bind_module(tree, global_config)
-        state = su.fill_tree_from_torch_module(state, t_module)
+        tree = su.fill_tree_from_torch_module(tree, t_module)
 
-        opt_state, opt_apply = AdamW(state, lr=0.001)
 
-        @jax.jit
-        def train_step(opt_state, state, x):
-            value_grad_fn = su.state_value_and_grad(apply)
-            # (state, value), grad = value_grad_fn(state, x)
-            # l_t = lambda state: value_grad_fn(state, x)
-            return opt_apply(opt_state, state, x, value_grad_fn, lr=1.0)
-            # (state, value), grad = value_grad_fn(state, x)
-            # l_t = lambda state: value_grad_fn(state, x)
-            # return opt_apply(opt_state, state, l_t, lr=1.0)
+        tree, global_config = AdamW((tree, global_config), lr=0.001)
+
+        def train_step(tree, global_config, x):
+            value_grad_fn = su.tree_value_and_grad(tree['submodules']['model_to_optimize']['apply'])
+            return su.apply_tree(tree, global_config, x, value_grad_fn, lr=1.0)
+
+        train_step = su.jit(train_step, static_argnums=1)
 
 
         opt_t = torch.optim.AdamW(t_module.parameters(), lr=0.001)
@@ -128,7 +127,8 @@ class TestSGD(unittest.TestCase):
             x = jnp.ones(shape=(4,3,5,4)) * jnp.sqrt(i+1)
             x_t = torch.tensor(np.array(x))
             
-            opt_state, state, value = train_step(opt_state, state, x)
+            update, value = train_step(tree, global_config, x)
+            tree = su.merge_trees(tree, update)
 
             opt_t.zero_grad()
             value_t = t_module(x_t)
