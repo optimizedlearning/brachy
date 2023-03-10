@@ -18,13 +18,18 @@ def chain(base_tree, *funcs):
     funcs = [_ for _ in funcs] # copy list so that it cannot be modified in place later and change behavior by accident
     def apply(tree, global_config, *args, **kwargs):
         base_tree = tree['submodules']['base_tree']
-        next_base_tree, x = su.apply_and_update_tree(base_tree, global_config, *args, **kwargs)
+        base_update, x = su.apply_tree(base_tree, global_config, *args, **kwargs)
 
-        tree['submodules']['base_tree'] = next_base_tree
         for f in funcs:
             x = f(x)
-        
-        return su.get_tree_update(tree), x
+        update = {
+            'submodules': {
+                'base_tree': base_update
+            },
+            'params': {},
+            'buffers': {}
+        }
+        return update, x
     
     tree = su.fill_tree({
         'submodules': {
