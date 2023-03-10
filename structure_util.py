@@ -32,11 +32,15 @@ AxisName = Hashable
 import rng_util
 from json import dumps, loads
 
+from functools import wraps
+
 import inspect
 
 
 StructureTree = dict
 PyTree = Any
+
+_CACHED_WRAPS = {}
 
 CHILD_KEY = 'submodules'
 
@@ -133,6 +137,160 @@ class HashableTree:
 
     def __str__(self):
         return f"HashableTree<{self.tree}>"
+
+
+def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=None, **outer_kwargs):
+
+    wrapper_signature = inspect.signature(wrapper)
+    wrapper_parameters = wrapper_signature.parameters
+    wrapper_argnames = list(wrapper_parameters.keys())
+
+    if wrapper not in _CACHED_WRAPS:
+        _CACHED_WRAPS[wrapper] = {}
+
+    _CACHED_FUNCS = _CACHED_WRAPS[wrapper]
+
+    outer_static_argnums = static_argnums
+    outer_static_argnames = static_argnames
+
+
+
+    @wraps(wrapper)
+    def new_wrapper(fun, *wrapper_args, static_argnums=None , static_argnames=None, **wrapper_kwargs):
+        # print("outer args: ", outer_args)
+        # print("outer static argnums: ")
+        if outer_static_argnums is not None:
+            assert static_argnums is None, "ambiguous setting for static_argnums in wrapper {fun}!"
+            static_argnums = outer_static_argnums
+
+        if outer_static_argnames is not None:
+            assert static_argnames is None, "ambiguous setting for static_argnames in wrapper {fun}!"
+            static_argnames = outer_static_argnames
+
+        if len(outer_args) == 0:
+            assert len(wrapper_args) == 0, "ambiguous args for wrapper {fun}!"
+            wrapper_args = outer_args
+
+        for k,v in outer_kwargs.items():
+            assert k not in wrapper_kwargs, "ambiguous kwargs for wrapper {fun}!"
+            wrapper_kwargs[k] = v
+
+        if 'static_argnums' in wrapper_argnames and len(wrapper_args) >= wrapper_argnames.index('static_argnums'):
+            static_argnums = wrapper_args[wrapper_argnames.index('static_argnums')]
+        if 'static_argnames' in wrapper_argnames and len(wrapper_args) >= wrapper_argnames.index('static_argnames'):
+            static_argnames = wrapper_args[wrapper_argnames.index('static_argnames')]
+
+        if isinstance(static_argnums, int):
+            static_argnums = [static_argnums]
+        if isinstance(static_argnames, str):
+            static_argnames = [static_argnames]
+        
+        if static_argnums is None:
+            static_argnums = []
+        if static_argnames is None:
+            static_argnames = []
+
+        static_argnums = list(static_argnums)
+
+        static_argnames = list(static_argnames)
+
+
+        signature = inspect.signature(fun)
+        parameters = signature.parameters
+        parameter_list = list(parameters.keys())
+
+        for name in static_argnames:
+            num = parameter_list.index(name)
+            if num not in static_argnums:
+                if parameters[name].kind != parameters[name].KEYWORD_ONLY:
+                    static_argnums.append(num)
+        
+        for num in static_argnums:
+            name = parameter_list[num]
+            if name not in static_argnames:
+                if parameters[name].kind != parameters[name].POSITIONAL_ONLY:
+                    static_argnames.append(name) 
+
+
+        # can't take this shortcut - still need to unwrap structure trees...
+        # if len(static_argnums) == 0 and len(static_argnames) == 0:
+        #     return wrapper(fun, *wrapper_args, **wrapper_kwargs)
+
+        if fun not in _CACHED_FUNCS:
+            _CACHED_FUNCS[fun] = {}
+
+        cached_calls = _CACHED_FUNCS[fun]
+        
+        @wraps(fun)
+        def wrapped_fun(*args, **kwargs):
+            
+            split_args = []
+            structure_tree_statics = {}
+            for argnum, arg in enumerate(args):
+                if not is_structure_tree(arg):
+                    split_args.append(arg)
+                    continue
+                params_buffers, rest = split_tree(arg, [RETURNED_KEYS, NON_RETURNED_KEYS])
+                split_args.append(params_buffers)
+                structure_tree_statics[argnum] = rest
+
+            split_kwargs = {}
+            for k, v in kwargs.items():
+                if not is_structure_tree(v):
+                    split_kwargs[k] = v
+                    continue
+                params_buffers, rest = split_tree(v, [RETURNED_KEYS, NON_RETURNED_KEYS])
+                split_kwargs[k] = params_buffers
+                structure_tree_statics[k] = rest  
+
+            static_args = [arg if i in static_argnums else None for i, arg in enumerate(split_args)]
+            static_kwargs = {
+                k: split_kwargs.get(k) for k in static_argnames
+            }
+
+            cache_key = HashableTree({
+                'static_argnums': static_argnums,
+                'static_args': static_args,
+                'static_argnames': static_argnames,
+                'static_kwargs': static_kwargs,
+                'structure_tree_statics': structure_tree_statics,
+            })
+
+            if cache_key not in cached_calls:
+                def to_wrap(*args, **kwargs):
+                    args_with_statics = list(args)
+                    for i in range(len(args)):
+                        if i in static_argnums:
+                            args_with_statics[i] = static_args[i]
+                        if i in structure_tree_statics:
+                            args_with_statics[i] = merge_trees(args_with_statics[i], structure_tree_statics[i])
+                    
+                    kwargs_with_statics = dict(kwargs)
+                    for k in kwargs:
+                        if k in static_argnames:
+                            kwargs_with_statics[k] = static_kwargs[k]
+                        if k in structure_tree_statics:
+                            kwargs_with_statics[k] = merge_trees(args_with_statics[k], structure_tree_statics[k])
+                    return fun(*args_with_statics, **kwargs_with_statics)
+
+                cached_calls[cache_key] = wrapper(to_wrap, *wrapper_args, **wrapper_kwargs)
+
+            wrapped = cached_calls[cache_key]
+
+            args_without_statics  = list(split_args)
+            for i in static_argnums:
+                if i < len(args):
+                    args_without_statics[i] = None
+            kwargs_without_statics = dict(split_kwargs)
+            for k in static_argnames:
+                if k in kwargs:
+                    kwargs_without_statics[k] = None
+
+            return wrapped(*args_without_statics, **kwargs_without_statics)
+
+        return wrapped_fun
+
+    return new_wrapper
 
 # Caution: the jit signature will change in version 0.4.x ... 
 def jit(

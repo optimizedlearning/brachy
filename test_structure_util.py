@@ -468,7 +468,7 @@ class TestStructureUtils(unittest.TestCase):
 
         trace_count = 0
 
-        @su.jit
+        @su.improved_static(jax.jit, static_argnums=1)
         def func(tree, global_config, x):
             nonlocal trace_count
             trace_count += 1
@@ -489,7 +489,7 @@ class TestStructureUtils(unittest.TestCase):
         assert jnp.allclose(y, 2*jnp.ones(5)), f"y was: {y}"
         assert trace_count == 1, f"trace count was: {trace_count}"
 
-        @su.jit
+        @su.improved_static(jax.jit)
         def loss(tree, global_config, x):
             state, y = func(tree, global_config, x)
             return state, jnp.sum(y**2)
@@ -530,7 +530,8 @@ class TestStructureUtils(unittest.TestCase):
                     return -x - w[1] - q
                 else:
                     return x
-        j_func = su.jit(func, static_argnums=1, static_argnames=('z','w'))
+        jit = su.improved_static(jax.jit)
+        j_func = jit(func, static_argnums=1, static_argnames=('z','w'))
 
         x = jnp.ones(1)
         other_x = jnp.zeros(1)
