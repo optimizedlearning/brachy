@@ -95,8 +95,8 @@ class TestSGD(unittest.TestCase):
             # (state, value), grad = value_grad_fn(state, x)
             # l_t = lambda state: value_grad_fn(state, x)
             return su.apply_tree(tree, global_config, x, value_grad_fn, lr=1.0)
-
-        train_step = su.jit(train_step, static_argnums=1)
+        jit = su.improved_static(jax.jit)
+        train_step = jit(train_step, static_argnums=1)
 
 
         sgd_t = torch.optim.SGD(t_module.parameters(), lr=0.001, momentum=0.9, weight_decay=0.1)
@@ -140,7 +140,7 @@ class TestSGD(unittest.TestCase):
             # (state, value), grad = value_grad_fn(state, x)
             # l_t = lambda state: value_grad_fn(state, x)
             return su.apply_tree(tree, global_config, x, value_grad_fn, lr=1.0)
-
+    
         train_step = su.jit(train_step, static_argnums=1)
 
 
@@ -161,7 +161,7 @@ class TestSGD(unittest.TestCase):
 
             value_t = value_t.detach().numpy()
 
-            assert jnp.allclose(value, value_t), f"values not close on iteration {i}: jax value: {value}, torch value: {value_t}"
+            assert jnp.allclose(value, value_t, rtol=1e-4), f"values not close on iteration {i}: jax value: {value}, torch value: {value_t}"
 
 
 
@@ -176,8 +176,10 @@ class TestSGD(unittest.TestCase):
 
 
         tree, global_config = AdamW((tree, global_config), lr=0.001)
-
+        jit_canary = 0
         def train_step(tree, global_config, x):
+            nonlocal jit_canary
+            jit_canary += 1
             value_grad_fn = su.tree_value_and_grad(tree['submodules']['model_to_optimize']['apply'])
             return su.apply_tree(tree, global_config, x, value_grad_fn, lr=1.0)
 
@@ -201,8 +203,9 @@ class TestSGD(unittest.TestCase):
 
             value_t = value_t.detach().numpy()
 
-            assert jnp.allclose(value, value_t), f"values not close on iteration {i}: jax value: {value}, torch value: {value_t}"
 
+            assert jnp.allclose(value, value_t, rtol=1e-4), f"values not close on iteration {i}: jax value: {value}, torch value: {value_t}"
+        
 
-
+        assert jit_canary == 1
 

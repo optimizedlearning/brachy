@@ -62,11 +62,14 @@ def main():
 
     print("Initializing optimizer...")
     optconf = config.train.optimizer
-    opt_tree, global_config = optim.add_mixed_precision(
-        optim.process_grads.clip_grads(
-            optim.AdamW(model, lr=1.0, betas=optconf.betas, weight_decay=optconf.weight_decay),
-            clip_value=config.train.optimizer.clip, clip_type='per_coordinate'),
-        config.train.mixed_precision_scalar)
+    opt_tree, global_config = optim.process_grads.clip_grads(
+        optim.AdamW(model, lr=1.0, betas=list(optconf.betas), weight_decay=optconf.weight_decay),
+        clip_value=config.train.optimizer.clip, clip_type='per_coordinate')
+
+    if config.train.mixed_precision:
+        opt_tree, global_config = optim.add_mixed_precision(
+            (opt_tree, global_config),
+            config.train.mixed_precision_scalar)
 
     print("Setting up dataloader...")
     train_loader = load_c4_data(config, tokenizer)
@@ -79,7 +82,7 @@ def main():
     train_loop(
         config,
         opt_tree,
-        global_config
+        global_config,
         train_loader)
 
 
@@ -93,7 +96,6 @@ def loss(model_tree, global_config, batch):
 
     return model_update, cross_entropy, outputs
 
-@jax.jit
 def train_step(
     opt_tree,
     global_config,
@@ -104,7 +106,7 @@ def train_step(
 
     # output_num=0 indicates that we differentate the first return value after the model_tree...
     # would it be better to instead make this output_num=1??
-    loss_and_grad = su.tree_value_and_grad(loss, global_config, output_num=0)
+    loss_and_grad = su.tree_value_and_grad(loss, output_num=0)
 
     lr = lr_scheduler(token_count)
 
@@ -147,27 +149,15 @@ def get_lr_scheduler(config):
 
 def train_loop(
     config,
-    opt_state,
+    opt_tree,
     global_config,
     train_loader):
 
 
     lr_scheduler = get_lr_scheduler(config)
 
-    # JIT the train step.
-    # We first wrap the train step in partial in order
-    # to capture all the constant arguments that are not JAX types
-    # and so would throw an error when jitted.
-    # Since these constant types are all functions, we could technically
-    # also wrap them in Partials and then use static_argnums in the jit call,
-    # but this way we are guarded against inadvertently changing the arguments and
-    # retrigging compilation.
-    # train_step_partial = Partial(
-    #     train_step,
-    #     model_apply=model_apply,
-    #     opt_apply=opt_apply,
-    #     lr_scheduler=lr_scheduler)
-    # train_step_jit = jax.jit(train_step_partial)
+    # JIT compile the train step.
+    train_step_jit = su.jit(train_step, static_argnames=['lr_scheduler', 'global_config'], donate_argnums=0)
 
     # statistics to track during training.
     token_count = jnp.array(0.0) # this prevents the jit from tracing again in the second round.
@@ -182,6 +172,8 @@ def train_loop(
 
     pbar = tqdm(enumerate(train_loader))
 
+
+
     for batch_idx, batch in pbar:
 
         inputs = jnp.array(batch['input_ids'])
@@ -191,7 +183,8 @@ def train_loop(
 
         # old_opt_state = opt_state
         # old_model_state = model_state
-        opt_update, log_data = train_step(opt_tree, global_config, inputs, targets, token_count)
+        opt_update, log_data = train_step_jit(opt_tree, global_config, inputs, targets, token_count, lr_scheduler)
+        
 
         # this step feels hacky... ideally train_step would just return the entire updated tree, but 
         # unfortunately structure trees are not jax types because they hold things like functions and strings
@@ -199,6 +192,9 @@ def train_loop(
         # maybe there is a better way to phrase things though? The below seems especially dangerous
         # because the order of the arguments is important and also non-obvious. Maybe the function should be named
         # in a way that makes it clear what to do...
+        # options include designing a clearer api for doing the following merge, or coming up with a way
+        # to allow returning entire structure trees that doesn't feel too dangerous. For example, if we assume all non jax-type
+        # return values are invariant to the jax-type arguments, then it could probably be done...
         opt_tree = su.merge_trees(opt_tree, opt_update)
     
 
