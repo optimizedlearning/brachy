@@ -20,7 +20,7 @@ def apply(structure_tree, global_config, ...) -> structure_tree, Any
 import jax
 from jax import numpy as jnp
 from jax.tree_util import Partial, tree_map, tree_flatten, tree_reduce
-from jax._src.core import valid_jaxtype
+# from jax._src.core import valid_jaxtype
 
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 import typing
@@ -292,135 +292,8 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
 
     return new_wrapper
 
-# Caution: the jit signature will change in version 0.4.x ... 
-def jit(
-    fun: Callable,
-    *,
-    static_argnums: Union[int, Sequence[int], None] = None,
-    static_argnames: Union[Any, None] = None,
-    device=None,
-    backend=None,
-    donate_argnums: Union[int, Sequence[int]] = (),
-    inline=False,
-    keep_unused: bool = False,
-    abstracted_axes=None):
 
-    if isinstance(static_argnums, int):
-        static_argnums = [static_argnums]
-    if isinstance(static_argnames, str):
-        static_argnames = [static_argnames]
-    
-    if static_argnums is None:
-        static_argnums = []
-    if static_argnames is None:
-        static_argnames = []
-
-    static_argnums = list(static_argnums)
-    static_argnames = list(static_argnames)
-
-
-    signature = inspect.signature(fun)
-    parameters = signature.parameters
-    parameter_list = list(parameters.keys())
-
-    for name in static_argnames:
-        num = parameter_list.index(name)
-        if num not in static_argnums:
-            if parameters[name].kind != parameters[name].KEYWORD_ONLY:
-                static_argnums.append(num)
-    
-    for num in static_argnums:
-        name = parameter_list[num]
-        if name not in static_argnames:
-            if parameters[name].kind != parameters[name].POSITIONAL_ONLY:
-                static_argnames.append(name) 
-
-    static_argnames.append('_structure_tree_statics_')
-
-  
-    def untransform_arg(arg):
-        if isinstance(arg, HashableTree):
-            return arg.tree
-        return arg
-
-    def jitable_fun(*args, **kwargs):
-        args = [untransform_arg(arg) for arg in args]
-        kwargs = {
-            k: untransform_arg(v) for k,v in kwargs.items()
-        }
-        for k,v in kwargs['_structure_tree_statics_'].items():
-            if isinstance(k, int):
-                args[k] = merge_trees(args[k], v)
-            else:
-                kwargs[k] = merge_trees(kwargs[k], v)
-        
-        del kwargs['_structure_tree_statics_']
-
-        return fun(*args, **kwargs)
-
-    jitted_fun = jax.jit(
-        jitable_fun,
-        static_argnums=static_argnums,
-        static_argnames=static_argnames,
-        donate_argnums=donate_argnums,
-        keep_unused=keep_unused,
-        device=device,
-        backend=backend,
-        inline=inline,
-        abstracted_axes=abstracted_axes)
-
-    def hashable(x):
-        return isinstance(x, Hashable)
-
-
-    def make_hashable(arg, argnum=None, argname=None):
-        if argname is None:
-            argname = parameter_list[argnum]
-        if argnum is None:
-            argnum = parameter_list.index(argname)
-
-        if argname not in static_argnames and argnum not in static_argnums:
-            return arg
-
-        if hashable(arg):
-            return arg
-        
-        return HashableTree(arg)
-
-    def wrapped_jit(*args, **kwargs):
-
-        split_args = []
-        structure_tree_statics = {}
-        for argnum, arg in enumerate(args):
-            if not is_structure_tree(arg):
-                split_args.append(arg)
-                continue
-            params_buffers, rest = split_tree(arg, [RETURNED_KEYS, NON_RETURNED_KEYS])
-            split_args.append(params_buffers)
-            structure_tree_statics[argnum] = rest
-
-        split_kwargs = {}
-        for k, v in kwargs.items():
-            if not is_structure_tree(v):
-                split_kwargs[k] = v
-                continue
-            params_buffers, rest = split_tree(v, [RETURNED_KEYS, NON_RETURNED_KEYS])
-            split_kwargs[k] = params_buffers
-            structure_tree_statics[k] = rest           
-
-            
-                
-
-        args = [make_hashable(arg, argnum=argnum) for argnum, arg in enumerate(split_args)]
-        kwargs = {
-            k: make_hashable(v, argname=k) for k,v in split_kwargs.items()
-        }
-        kwargs['_structure_tree_statics_'] = HashableTree(structure_tree_statics)
-
-        return jitted_fun(*args, **kwargs)
-
-    return wrapped_jit
-
+jit = improved_static(jax.jit)
 
 
 
@@ -472,7 +345,8 @@ def tree_value_and_grad(
         if 'mixed_precision' in new_tree['buffers']:
             mixed_precision = new_tree['buffers']['mixed_precision']
             grad = uncast_mixed_precision(new_tree, grad)
-            output = output.astype(mixed_precision['output_type'].dtype) / mixed_precision['loss_scalar'].astype(mixed_precision['output_type'].dtype)  
+            output_type = rest['aux']['mixed_precision']['output_type']
+            output = output.astype(output_type) / mixed_precision['loss_scalar'].astype(output_type)  
 
         final_output = tuple([aux for aux in aux_output[:output_num]] + [output] + [aux for aux in aux_output[output_num:]])
 
@@ -752,15 +626,15 @@ def _is_valid_submodule(v):
 
 #THIS FEELS SUPER HACKY
 def is_jax_tree(x):
-    return tree_reduce(lambda a,b: a and valid_jaxtype(b), x, True)
-    # @jax.jit
-    # def jitted_id(a):
-    #     return tree_map(lambda b: b, a)
-    # try:
-    #     jitted_id(x)
-    # except:
-    #     return False
-    # return True
+    # return tree_reduce(lambda a,b: a and valid_jaxtype(b), x, True)
+    @jax.jit
+    def jitted_id(a):
+        return tree_map(lambda b: b, a)
+    try:
+        jitted_id(x)
+    except:
+        return False
+    return True
 
 
 def merge_configs(*configs):
@@ -1013,8 +887,6 @@ class StateOrganizer:
         state = self._state
         lookup = _inverse_lookup(self._state, name)
 
-
-
         if len(lookup) > 1:
             raise ValueError("attempting to set a value with an ambiguous name!")
         if len(lookup) == 1:
@@ -1038,5 +910,6 @@ class StateOrganizer:
             state['params'][name] = value
             return value
 
-
+        if name == 'betas':
+            print("found nothing..")
         return super().__setattr__(name, value)

@@ -9,21 +9,21 @@ import structure_util as su
 
 
 def _cast_fp16(x):
-    if x.dtype==jnp.float32:
-        return x.astype(jnp.float16)
+    if jnp.array(x).dtype==jnp.float32:
+        return jnp.array(x).astype(jnp.float16)
     else:
         return x
 
 def _cast_fp32(x):
-    if x.dtype==jnp.float16:
-        return x.astype(jnp.float32)
+    if jnp.array(x).dtype==jnp.float16:
+        return jnp.array(x).astype(jnp.float32)
     else:
         return x
 
 def fp16_apply(apply):
     def new_apply(tree, global_config, *args, **kwargs):
-        params_dtypes = tree_map(lambda x: x.dtype, tree['params'])
-        buffers_dtypes = tree_map(lambda x: x.dtype, tree['buffers'])
+        params_dtypes = tree_map(lambda x: jnp.array(x).dtype, tree['params'])
+        buffers_dtypes = tree_map(lambda x: jnp.array(x).dtype, tree['buffers'])
         tree['params'] = tree_map(_cast_fp16, tree['params'])
         tree['buffers'] = tree_map(_cast_fp16, tree['buffers'])
         args = [tree_map(_cast_fp16, arg) for arg in args]
@@ -31,8 +31,8 @@ def fp16_apply(apply):
         
         state, value = apply(tree, global_config, *args, **kwargs)
 
-        state['params'] = tree_map(lambda x, t: x.astype(t), state['params'], params_dtypes)
-        state['buffers'] = tree_map(lambda x, t: x.astype(t), state['buffers'], buffers_dtypes)
+        state['params'] = tree_map(lambda x, t: jnp.array(x).astype(t), state['params'], params_dtypes)
+        state['buffers'] = tree_map(lambda x, t: jnp.array(x).astype(t), state['buffers'], buffers_dtypes)
         
         value = tree_map(_cast_fp32, value)
 
@@ -95,7 +95,10 @@ def add_mixed_precision(float_tree, loss_scalar=1.0, output_type=jnp.float32):
 
     half_tree['buffers']['mixed_precision'] = {
         'loss_scalar': jnp.array(loss_scalar, dtype=jnp.float16),
-        'output_type': jnp.ones(1, dtype=output_type),
+    }
+
+    half_tree['aux']['mixed_precision'] = {
+        'output_type': output_type
     }
 
     return half_tree

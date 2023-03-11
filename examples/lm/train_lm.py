@@ -51,25 +51,27 @@ def main():
 
     print("Initializing model...")
     rng = jax.random.PRNGKey(0)
-    model = StackedAttention(config.model, rng=rng)
+    model_tree, global_config = StackedAttention(config.model, rng=rng)
     # model is a tuple: (model_tree, model_config)
     
-    # if config.train.mixed_precision:
-    #     model_tree = optim.add_mixed_precision(model_tree, config.train.mixed_precision_scalar)
+    if config.train.mixed_precision:
+        model_tree = optim.add_mixed_precision(model_tree, config.train.mixed_precision_scalar)
 
     # model_state, model_apply = su.bind_module(model_tree, model_config)
 
 
     print("Initializing optimizer...")
     optconf = config.train.optimizer
+    opt = optim.AdamW((model_tree, global_config), lr=1.0, betas=list(optconf.betas), weight_decay=optconf.weight_decay)
+    # if config.train.mixed_precision:
+    #     opt = optim.add_mixed_precision(
+    #         opt,
+    #         config.train.mixed_precision_scalar)
+
     opt_tree, global_config = optim.process_grads.clip_grads(
-        optim.AdamW(model, lr=1.0, betas=list(optconf.betas), weight_decay=optconf.weight_decay),
+        opt,
         clip_value=config.train.optimizer.clip, clip_type='per_coordinate')
 
-    if config.train.mixed_precision:
-        opt_tree, global_config = optim.add_mixed_precision(
-            (opt_tree, global_config),
-            config.train.mixed_precision_scalar)
 
     print("Setting up dataloader...")
     train_loader = load_c4_data(config, tokenizer)
@@ -103,7 +105,6 @@ def train_step(
     targets,
     token_count,
     lr_scheduler):
-
     # output_num=0 indicates that we differentate the first return value after the model_tree...
     # would it be better to instead make this output_num=1??
     loss_and_grad = su.tree_value_and_grad(loss, output_num=0)
