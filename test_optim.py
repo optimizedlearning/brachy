@@ -16,6 +16,9 @@ import structure_util as su
 
 from optim.sgd import SGD
 from optim.adamw import AdamW
+from optim import mixed_precision_tree, mixed_precision_loss
+
+from optim.process_grads import clip_grads
 
 
 
@@ -51,20 +54,22 @@ def simple_ff(organizer, rng=None):
         nn.Conv2d(3,3,3,padding='same'),
         nn.BatchNorm2d(3)
     ])
-    # organizer.conv1 = nn.Conv2d(3,3,3,padding='same')
-    # organizer.bn1 = nn.BatchNorm2d(3)
     organizer.lin2 = nn.Linear(10,4)
     organizer.set_apply(simple_ff_apply)
+
+
+    organizer.seq[1].register_aux('force_high_precision', True)
+
 
 @su.organized_apply
 def simple_ff_apply(organizer, x):
     x = organizer.lin1(x)
     x = nn.functional.relu(x)
     x = organizer.seq(x)
-    # x = organizer.conv1(x)
-    # x = organizer.bn1(x)
     x = organizer.lin2(x)
     return jnp.sum(x)
+
+
 
 
 
@@ -209,3 +214,135 @@ class TestSGD(unittest.TestCase):
 
         assert jit_canary == 1
 
+
+    def test_mixed_precision(self):
+
+        rng = jax.random.PRNGKey(0)
+        tree, global_config = simple_ff(rng=rng)
+
+        mixed_tree = mixed_precision_tree(tree, loss_scalar=16.0)
+
+
+        tree, global_config = SGD((tree, global_config), lr=0.0001, momentum=0.9, weight_decay=0.1)
+
+        mixed_tree, global_config = SGD((mixed_tree, global_config), lr=0.0001, momentum=0.9, weight_decay=0.1)
+
+        def loss(tree, global_config, x):
+            tree, value = su.apply_tree(tree, global_config, x)
+            return  tree,  0.1*value**2
+
+        value_grad_fn = su.tree_value_and_grad(loss)
+
+        mixed_value_grad_fn = su.tree_value_and_grad(mixed_precision_loss(loss))
+
+
+        def train_step(tree, global_config, x):
+            return su.apply_tree(tree, global_config, x, value_grad_fn, lr=1.0)
+
+        def mixed_train_step(tree, global_config, x):
+            return su.apply_tree(tree, global_config, x, mixed_value_grad_fn, lr=1.0)
+    
+        train_step = su.jit(train_step, static_argnums=1)
+        mixed_train_step = su.jit(mixed_train_step, static_argnums=1)
+
+
+        for i in range(100):
+
+            x = jnp.ones(shape=(4,3,5,4)) * jnp.sqrt(i+1)
+            x_t = torch.tensor(np.array(x))
+            
+            tree_update, value = train_step(tree, global_config, x)
+            tree = su.merge_trees(tree, tree_update)
+
+
+            mixed_tree_update, mixed_value = mixed_train_step(mixed_tree, global_config, x)
+            mixed_tree = su.merge_trees(mixed_tree, mixed_tree_update)
+
+            if i <= 5:
+                assert jnp.allclose(value, mixed_value, rtol=1e-1), f"values not close on iteration {i}: float32 value: {value}, float16 value: {mixed_value}"
+
+        assert jnp.allclose(0, mixed_value, atol=1e-4), f"mixed_precision did not optimize! loss was {mixed_value}"
+
+
+
+
+
+
+
+    def test_clipped_grad_optimizes(self):
+
+        rng = jax.random.PRNGKey(0)
+        tree, global_config = simple_ff(rng=rng)
+
+
+        tree, global_config = SGD((tree, global_config), lr=0.0001, momentum=0.9, weight_decay=0.1)
+        tree, global_config = clip_grads((tree, global_config), 0.1)
+
+
+        def loss(tree, global_config, x):
+            tree, value = su.apply_tree(tree, global_config, x)
+            return  tree,  0.1*value**2
+
+        value_grad_fn = su.tree_value_and_grad(loss)
+
+
+
+        def train_step(tree, global_config, x):
+            return su.apply_tree(tree, global_config, x, value_grad_fn, lr=1.0)
+    
+        train_step = su.jit(train_step, static_argnums=1)
+
+
+        for i in range(100):
+
+            x = jnp.ones(shape=(4,3,5,4)) * jnp.sqrt(i+1)
+            x_t = torch.tensor(np.array(x))
+            
+            tree_update, value = train_step(tree, global_config, x)
+            tree = su.merge_trees(tree, tree_update)
+
+        assert jnp.allclose(0, value, atol=1e-4), f"clip grads did not optimize! loss was {value}"
+
+
+    def test_clipped_grad_explicit(self):
+
+        rng = jax.random.PRNGKey(0)
+
+        tree = {
+            'params': {
+                'x': jnp.ones(2)
+            },
+            'buffers': {},
+            'aux': {},
+            'apply': lambda t, g, w: (t, t['params']['x'] * w),
+            'submodules': {}
+        }
+        global_config = {}
+
+        w = jnp.array([10.0, -1.0])
+
+
+        tree, global_config = SGD((tree, global_config), lr=1.0, momentum=0.0, weight_decay=0.0)
+
+        tree, global_config = clip_grads((tree, global_config), 1.0)
+
+
+
+        def loss(tree, global_config, w):
+            tree, value = su.apply_tree(tree, global_config, w)
+            return  tree,  jnp.sum(value)
+
+        value_grad_fn = su.tree_value_and_grad(loss)
+
+
+
+        def train_step(tree, global_config, w):
+            return su.apply_tree(tree, global_config, w, value_grad_fn)
+
+        train_step = su.jit(train_step, static_argnums=1)
+
+        tree, value = train_step(tree, global_config, w)
+
+        new_x = tree['submodules']['optimizer']['submodules']['model_to_optimize']['params']['x']
+
+        assert jnp.allclose(new_x, jnp.array([0.0, 2.0])), f"x was unexpected value: {new_x}"

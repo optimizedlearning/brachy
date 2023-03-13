@@ -55,7 +55,7 @@ def main():
     # model is a tuple: (model_tree, model_config)
     
     if config.train.mixed_precision:
-        model_tree = optim.add_mixed_precision(model_tree, config.train.mixed_precision_scalar)
+        model_tree = optim.mixed_precision_tree(model_tree, config.train.mixed_precision_scalar)
 
     # model_state, model_apply = su.bind_module(model_tree, model_config)
 
@@ -79,6 +79,8 @@ def main():
 
     wandb.init(project='hax_c4')
     wandb.config.update(OmegaConf.to_container(config))
+
+    global_config['args_config'] = config
 
     print("Starting training loop...")
     train_loop(
@@ -105,9 +107,16 @@ def train_step(
     targets,
     token_count,
     lr_scheduler):
+
+
+    if global_config['args_config'].train.mixed_precision:
+        loss_fn = optim.mixed_precision_loss(loss)
+    else:
+        loss_fn = loss
+    
     # output_num=0 indicates that we differentate the first return value after the model_tree...
     # would it be better to instead make this output_num=1??
-    loss_and_grad = su.tree_value_and_grad(loss, output_num=0)
+    loss_and_grad = su.tree_value_and_grad(loss_fn, output_num=0)
 
     lr = lr_scheduler(token_count)
 

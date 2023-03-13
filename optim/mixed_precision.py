@@ -1,6 +1,10 @@
 import structure_util as su
 from jax.tree_util import tree_map, Partial
 from jax import numpy as jnp
+from jax import custom_vjp
+from jax import custom_jvp
+
+
 import jax
 
 import sys
@@ -87,9 +91,41 @@ def cast_back(tree):
     return su.merge_trees(rest, params_buffers)
 
 
+@custom_vjp
+def scale_in_backwards(x, s):
+    return x
 
-def add_mixed_precision(float_tree, loss_scalar=1.0, output_type=jnp.float32):
+def scale_in_backwards_fwd(x, s):
+    return scale_in_backwards(x, s), s
 
+def scale_in_backwards_bwd(s, g):
+    return g * s, 0.0
+
+scale_in_backwards.defvjp(scale_in_backwards_fwd, scale_in_backwards_bwd)
+
+# currently assumes first argument  of loss is the tree and second return value is the loss.
+def mixed_precision_loss(loss):#, loss_scalar=1.0, output_type=jnp.float32):
+    # loss_scalar = jnp.array(loss_scalar)
+    def mixed_loss(tree, *args, **kwargs):
+
+        loss_scalar = tree['buffers']['mixed_precision']['loss_scalar']
+        output_type = tree['aux']['mixed_precision']['output_type']
+        # half_tree = su.structure_tree_map(cast_node, float_tree)
+        # half_tree['buffers']['mixed_precision'] = {
+        #     'loss_scalar': jnp.array(loss_scalar, dtype=jnp.float16),
+        # }
+
+        # half_tree['aux']['mixed_precision'] = {
+        #     'output_type': output_type
+        # }
+        tree = su.map_params_buffers(lambda x: scale_in_backwards(x, 1.0/loss_scalar), tree)
+        (tree, value, *rest) = loss(tree, *args, **kwargs)
+        value =  scale_in_backwards(value, loss_scalar.astype(output_type))
+        return (tree, value, *rest)
+    return mixed_loss
+
+
+def mixed_precision_tree(float_tree, loss_scalar=1.0, output_type=jnp.float32):
     root_apply = float_tree['apply']
     half_tree = su.structure_tree_map(cast_node, float_tree)
 

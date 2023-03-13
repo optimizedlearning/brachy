@@ -13,6 +13,43 @@ the convolution operation. I think it is probably due to the cuda or cudnn versi
 Probably you should create a separate environment for GPU vs CPU and run the module load and pip install commands separately on a GPU interactive process. Otherwise
 I'm not sure the GPU parts will install correctly. You can try replacing `requirements.txt` with `requirements_cpu.txt` for a CPU install. I've asked RCS to just provide a recent Jax installation via the module system, so hopefully these issues will go away.
 
+## Better JIT wrapper
+First, it is very annoying that `jax.jit` cannot handle dictionaries as static arguments, or pytrees where some arguments are static and some can be traced, or functions that return static values. So, we provide a general wrapper in `structure_util.improved_static` that takes care of this:
+```
+import jax
+from jax import numpy as jnp
+import structure_util as su
+
+jit  = su.jit
+# su.jit is an alias for su.improved_static(jax.jit).
+
+@jit
+def foo(x,y):
+    if x['q'] == 'go ahead!':
+        return {'a': x['a'], 'b': y['b']}
+    else:
+        return {'a': 2*y['a'], 'b': y['b']}
+
+x = {
+    'q': 'stop',
+    'a': jnp.ones(3)
+}
+y = {
+    'a': jnp.ones(5),
+    'b': ['hello', 'friend']
+}
+
+z = foo(x,y) 
+## z should be:
+# {'a': jnp.array([2,2,2,2,2]), 'b': ['hello', 'friend']}
+```
+
+Further, this wrapper also will automatically extract and make static the static components of a structure tree (described below). That is,
+if a structure tree has an otherwise traceable value under the `'aux'` key (e.g. a `False` for configuration or similar), then it will not be traced.
+
+This wrapper `su.improved_static` can also  be used  to impart similar behavior to other JAX primitives (e.g. `xmap`).
+
+
 ## Overview
 HAX tries to keep your code as close to the functional spirit of JAX as possible
 while also facilitating easy portability from pytorch.

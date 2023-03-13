@@ -362,7 +362,14 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 
 # jit = improved_static(jax.jit)
 
-
+def map_params_buffers(f, tree):
+    def node_f(node, path=None):
+        node = dict(node)
+        node['params'] = tree_map(f, node['params'])
+        node['buffers'] = tree_map(f, node['buffers'])
+        node['submodules'] = {}
+        return node
+    return structure_tree_map(node_f, tree)
 
 def uncast_mixed_precision(state, grad):
     # types = state['buffers']['mixed_precision']['types']

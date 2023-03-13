@@ -437,6 +437,53 @@ class TestStructureUtils(unittest.TestCase):
         min_empty = su.empty_tree()
         assert same_trees(min_empty, min_empty_ref, keys_to_exclude=['apply']), f"reference empty tree:\n{min_empty_ref}\nReturned empty tree:\n{min_empty}"
 
+    def test_map_params_buffers(self):
+        tree = {
+            'params': {
+                'a': {'p': jnp.array(0)},
+                'b': jnp.array([1,2])
+            },
+            'buffers': {'p': jnp.array(0)},
+            'aux': {},
+            'apply': None,
+            'submodules': {
+                'k': {
+                    'params': {
+                        'b': {'l': jnp.array([4,3])}
+                    },
+                    'buffers': {'l': jnp.array(3)},
+                    'aux': {},
+                    'apply': None,
+                    'submodules': {}
+                }
+            }
+        }
+
+        expected = {
+            'params': {
+                'a': {'p': jnp.array(1)},
+                'b': jnp.array([2,3])
+            },
+            'buffers': {'p': jnp.array(1)},
+            'aux': {},
+            'apply': None,
+            'submodules': {
+                'k': {
+                    'params': {
+                        'b': {'l': jnp.array([5,4])}
+                    },
+                    'buffers': {'l': jnp.array(4)},
+                    'aux': {},
+                    'apply': None,
+                    'submodules': {}
+                }
+            }
+        }
+
+        mapped = su.map_params_buffers(lambda x: x+1, tree)
+
+        assert same_dicts(mapped,  expected)
+
 
 
     def test_tree_alteration(self):
@@ -464,6 +511,40 @@ class TestStructureUtils(unittest.TestCase):
 
         assert jnp.allclose(y_second, jnp.array([-2, 11, 32, 63, 216]))
 
+
+    def test_jit_autostatic(self):
+
+
+        trace_count = 0
+        jit  = su.improved_static(jax.jit)
+
+        @jit
+        def foo(x,y):
+            nonlocal trace_count
+            trace_count += 1
+            if x['q'] == 'go ahead!':
+                return {'a': x['a'], 'b': y['b']}
+            else:
+                return {'a': 2*y['a'], 'b': y['b']}
+
+        x = {
+            'q': 'stop',
+            'a': jnp.ones(3)
+        }
+        y = {
+            'a': jnp.ones(5),
+            'b': ['hello', 'friend']
+        }
+
+        z = foo(x,y)
+        x['a'] = jnp.zeros(3)
+        w = foo(x,y)
+
+        assert jnp.allclose(z['a'], jnp.array([2.0,2.0,2.0,2.0,2.0]))
+        assert z['b'][0] == 'hello'
+        assert z['b'][1] == 'friend'
+        assert trace_count == 1
+
     def test_jit_tree(self):
 
         trace_count = 0
@@ -489,10 +570,11 @@ class TestStructureUtils(unittest.TestCase):
         assert jnp.allclose(y, 2*jnp.ones(5)), f"y was: {y}"
         assert trace_count == 1, f"trace count was: {trace_count}"
 
-        @su.improved_static(jax.jit, static_argnums=1)
         def loss(tree, global_config, x):
             state, y = func(tree, global_config, x)
             return state, jnp.sum(y**2)
+
+        loss = su.jit(loss, static_argnums=1)
 
 
         value_and_grad = su.tree_value_and_grad(loss)

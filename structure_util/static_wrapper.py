@@ -211,12 +211,10 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
                 'static_argnames': static_argnames,
                 'static_kwargs': static_kwargs,
                 'structure_tree_args_statics': structure_tree_args_statics,
-                'tree_statics': tree_args_statics,
+                'tree_args_statics': tree_args_statics,
                 'structure_tree_kwargs_statics': structure_tree_kwargs_statics,
                 'tree_kwargs_statics': tree_kwargs_statics,
             })
-
-
 
             # cache miss - define a function to wrap with the base wrapper.
             if cache_key not in cached_calls:
@@ -248,11 +246,10 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
                     returned_structure_statics = {}
                     split_values = list(values)
                     for i, v in enumerate(values):
-                        if su.is_structure_tree(v):
-                            jax_tree, nonjax_tree = split_jax_nonjax(v)
-                            if cached_calls[cache_key]['returned_structure_statics'] is None:
-                                returned_structure_statics[i] = nonjax_tree
-                            split_values[i] = jax_tree
+                        jax_tree, nonjax_tree = split_jax_nonjax(v)
+                        if cached_calls[cache_key]['returned_structure_statics'] is None:
+                            returned_structure_statics[i] = nonjax_tree
+                        split_values[i] = jax_tree
                     if cached_calls[cache_key]['returned_structure_statics'] is None:
                         cached_calls[cache_key]['returned_structure_statics'] = returned_structure_statics
                     if len(split_values) == 1:
@@ -268,14 +265,16 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
             wrapped = cached_calls[cache_key]['wrapped_func']
 
             args_without_statics  = list(split_args)
+            kwargs_without_statics  = dict(split_kwargs)
+
+
             for i in static_argnums:
                 if i < len(args):
                     args_without_statics[i] = None
-            kwargs_without_statics = dict(split_kwargs)
             for k in static_argnames:
                 if k in kwargs:
                     kwargs_without_statics[k] = None
-            
+                     
             # add back cached static outputs to the jaxtype outputs.
             values = wrapped(*args_without_statics, **kwargs_without_statics)
 

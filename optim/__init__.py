@@ -9,4 +9,4 @@ from optim.adamw import AdamW
 from optim.sgd import SGD
 
 
-from optim.mixed_precision import add_mixed_precision
+from optim.mixed_precision import mixed_precision_loss, mixed_precision_tree

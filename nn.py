@@ -305,7 +305,6 @@ def Conv2d_apply(tree, global_config, x):
     weight = tree['params']['weight']
 
     aux = SimpleNamespace(**tree['aux'])
-    
 
     
 
