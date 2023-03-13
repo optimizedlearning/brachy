@@ -147,13 +147,14 @@ class HashableTree:
 def split_jax_nonjax(tree):
     keep_static = lambda x: not valid_jaxtype(x) and isinstance(x, Hashable)
     jaxtype_tree = tree_map(lambda x: 0 if keep_static(x) else x, tree)
-    nonjaxtype_tree = tree_map(lambda x: x if keep_static(x) else 0, tree)
+    nonjaxtype_tree = tree_map(lambda x: x if keep_static(x) else '__JAXTYPE_MARKER__', tree)
 
     return jaxtype_tree, nonjaxtype_tree
 
 def merge_jax_nonjax(jax_tree, nonjax_tree):
     def merge(jt, njt):
-        if njt == 0:
+        if njt == '__JAXTYPE_MARKER__':
+            # print("hihi")
             return jt
         else:
             return njt
@@ -195,6 +196,9 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
             assert k not in wrapper_kwargs, "ambiguous kwargs for wrapper {fun}!"
             wrapper_kwargs[k] = v
 
+
+        # print("static argnums before: ",static_argnums)
+
         if 'static_argnums' in wrapper_argnames and len(wrapper_args) >= wrapper_argnames.index('static_argnums'):
             static_argnums = wrapper_args[wrapper_argnames.index('static_argnums')]
         if 'static_argnames' in wrapper_argnames and len(wrapper_args) >= wrapper_argnames.index('static_argnames'):
@@ -213,6 +217,8 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
         static_argnums = list(static_argnums)
 
         static_argnames = list(static_argnames)
+
+        # print("static argnums after: ",static_argnums)
 
 
         signature = inspect.signature(fun)
@@ -245,17 +251,29 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
         def wrapped_fun(*args, **kwargs):
             
             split_args = []
-            structure_tree_statics = {}
+            structure_tree_args_statics = {}
+            structure_tree_kwargs_statics = {}
 
-            tree_statics = {}
+            # print("static argnums in wrapped: ",static_argnums)
+
+            tree_args_statics = {}
+            tree_kwargs_statics = {}
             for argnum, arg in enumerate(args):
                 if not is_structure_tree(arg):
-                    split_args.append(arg)
-                    continue
+
+                    jax_tree, nonjax_tree = split_jax_nonjax(arg)
+                    split_args.append(jax_tree)
+                    tree_args_statics[argnum] = nonjax_tree
+                else:
+                    params_buffers, rest = split_tree(arg, [RETURNED_KEYS, NON_RETURNED_KEYS])
+                    split_args.append(params_buffers)
+                    structure_tree_args_statics[argnum] = rest                    
+                    # split_args.append(arg)
+                    # continue
                 # params_buffers, rest = split_tree(arg, [RETURNED_KEYS, NON_RETURNED_KEYS])
-                jax_tree, nonjax_tree = split_jax_nonjax(arg)
-                split_args.append(jax_tree)
-                tree_statics[argnum] = nonjax_tree
+                # jax_tree, nonjax_tree = split_jax_nonjax(arg)
+                # split_args.append(jax_tree)
+                # tree_statics[argnum] = nonjax_tree
 
             # for argnum, arg in enumerate(args):
             #     if not is_structure_tree(arg):
@@ -268,13 +286,13 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
             split_kwargs = {}
             for k, v in kwargs.items():
                 if not is_structure_tree(v):
-                    split_kwargs[k] = v
-                    continue
-                jax_tree, nonjax_tree = split_jax_nonjax(v)
-                # params_buffers, rest = split_tree(v, [RETURNED_KEYS, NON_RETURNED_KEYS])
-                split_kwargs[k] = jax_tree
-                structure_tree_statics[k] = nonjax_tree
-
+                    jax_tree, nonjax_tree = split_jax_nonjax(v)
+                    split_kwargs[k] = jax_tree
+                    tree_kwargs_statics[k] = nonjax_tree
+                else:
+                    params_buffers, rest = split_tree(v, [RETURNED_KEYS, NON_RETURNED_KEYS])
+                    split_kwargs[k] = params_buffers
+                    structure_tree_kwargs_statics[k] = rest  
 
             # for k, v in kwargs.items():
             #     if not is_structure_tree(v):
@@ -294,8 +312,10 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
                 'static_args': static_args,
                 'static_argnames': static_argnames,
                 'static_kwargs': static_kwargs,
-                'structure_tree_statics': structure_tree_statics,
-                'tree_statics': tree_statics,
+                'structure_tree_args_statics': structure_tree_args_statics,
+                'tree_statics': tree_args_statics,
+                'structure_tree_kwargs_statics': structure_tree_kwargs_statics,
+                'tree_kwargs_statics': tree_kwargs_statics,
             })
 
 
@@ -305,17 +325,19 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
                     for i in range(len(args)):
                         if i in static_argnums:
                             args_with_statics[i] = static_args[i]
-                        if i in tree_statics:
-                            args_with_statics[i] = merge_jax_nonjax(args_with_statics[i], tree_statics[i])
+                        if i in structure_tree_args_statics:
+                            args_with_statics[i] = merge_trees(args_with_statics[i], structure_tree_args_statics[i])
+                        if i in tree_args_statics:
+                            args_with_statics[i] = merge_jax_nonjax(args_with_statics[i], tree_args_statics[i])
                     
                     kwargs_with_statics = dict(kwargs)
                     for k in kwargs:
                         if k in static_argnames:
                             kwargs_with_statics[k] = static_kwargs[k]
-                        # if k in structure_tree_statics:
-                        #     kwargs_with_statics[k] = merge_trees(args_with_statics[k], structure_tree_statics[k])
-                        if k in tree_statics:
-                            kwargs_with_statics[i] = merge_jax_nonjax(kwargs_with_statics[i], tree_statics[i])
+                        if k in structure_tree_kwargs_statics:
+                            kwargs_with_statics[k] = merge_trees(kwargs_with_statics[k], structure_tree_args_statics[k])
+                        if k in tree_kwargs_statics:
+                            kwargs_with_statics[k] = merge_jax_nonjax(kwargs_with_statics[k], tree_kwargs_statics[k])
                     values = fun(*args_with_statics, **kwargs_with_statics)
 
                     if not isinstance(values, tuple):
@@ -327,11 +349,13 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
                     split_values = list(values)
                     for i, v in enumerate(values):
                         if is_structure_tree(v):
-                            params_buffers, rest = split_tree(v, [RETURNED_KEYS, NON_RETURNED_KEYS])
+                            # params_buffers, rest = split_tree(v, [RETURNED_KEYS, NON_RETURNED_KEYS])
+                            jax_tree, nonjax_tree = split_jax_nonjax(v)#, [RETURNED_KEYS, NON_RETURNED_KEYS])
                             if cached_calls[cache_key]['returned_structure_statics'] is None:
-                                returned_structure_statics[i] = rest
+                                # returned_structure_statics[i] = rest
+                                returned_structure_statics[i] = nonjax_tree
                             # cached_calls[cache_key]['returned_structure_statics'][i] = rest
-                            split_values[i] = params_buffers
+                            split_values[i] = jax_tree#params_buffers
                     if cached_calls[cache_key]['returned_structure_statics'] is None:
                         cached_calls[cache_key]['returned_structure_statics'] = returned_structure_statics
                     if len(split_values) == 1:
@@ -353,6 +377,9 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
             for k in static_argnames:
                 if k in kwargs:
                     kwargs_without_statics[k] = None
+            
+            # print("args without statics: ",args_without_statics[1])
+            # print("staic argnums: ", static_argnums)
 
             values = wrapped(*args_without_statics, **kwargs_without_statics)
 
@@ -361,7 +388,8 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
             values = list(values)
             
             for i, v in cached_calls[cache_key]['returned_structure_statics'].items():
-                values[i] = merge_trees(values[i], v)
+                # values[i] = merge_trees(values[i], v)
+                values[i] = merge_jax_nonjax(values[i], v)
             
             if len(values) == 1:
                 return values[0]
@@ -991,6 +1019,6 @@ class StateOrganizer:
             state['params'][name] = value
             return value
 
-        if name == 'betas':
-            print("found nothing..")
+        # if name == 'betas':
+        #     print("found nothing..")
         return super().__setattr__(name, value)

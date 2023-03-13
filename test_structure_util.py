@@ -468,7 +468,7 @@ class TestStructureUtils(unittest.TestCase):
 
         trace_count = 0
 
-        @su.improved_static(jax.jit, static_argnums=1)
+        @su.improved_static(jax.jit)
         def func(tree, global_config, x):
             nonlocal trace_count
             trace_count += 1
@@ -477,6 +477,7 @@ class TestStructureUtils(unittest.TestCase):
             return organizer.get_state(), y
 
         lin, global_config = nn.Linear(5,5, rng=jax.random.PRNGKey(0))
+        global_config['foo'] = 'hihihi'
         lin['params']['weight'] = jnp.eye(5)
         lin['params']['bias'] = jnp.ones(5)
         x = jnp.ones(5)
@@ -488,7 +489,7 @@ class TestStructureUtils(unittest.TestCase):
         assert jnp.allclose(y, 2*jnp.ones(5)), f"y was: {y}"
         assert trace_count == 1, f"trace count was: {trace_count}"
 
-        @su.improved_static(jax.jit)
+        @su.improved_static(jax.jit, static_argnums=1)
         def loss(tree, global_config, x):
             state, y = func(tree, global_config, x)
             return state, jnp.sum(y**2)
@@ -514,7 +515,7 @@ class TestStructureUtils(unittest.TestCase):
         assert jnp.allclose(grad['params']['bias'], 2*2*jnp.ones(5)), f"bias: {grad['params']['bias']}"
         assert jnp.allclose(grad['params']['weight'], 2*2*jnp.ones((5,5))), f"bias: {grad['params']['bias']}"
 
-    def test_jit(self):
+    def test_jit_notree(self):
 
         trace_count = 0
 
