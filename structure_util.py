@@ -139,27 +139,22 @@ class HashableTree:
         return f"HashableTree<{self.tree}>"
 
 
-# TODO: make these functions less of an abomination...
-# Note: cannot return Nones instead of 0s because tree_map just skips over the None nodes in the merge.
-# But it really would be better to do so, since then the jaxtype_tree wouldn't 
-# compile a bunch of useless constants. Although I guess the compiler might compile them out
-# since they are guaranteed to be not used.
+# These are a bit hacky...
 def split_jax_nonjax(tree):
     keep_static = lambda x: not valid_jaxtype(x) and isinstance(x, Hashable)
-    jaxtype_tree = tree_map(lambda x: 0 if keep_static(x) else x, tree)
-    nonjaxtype_tree = tree_map(lambda x: x if keep_static(x) else '__JAXTYPE_MARKER__', tree)
+    jaxtype_tree = tree_map(lambda x: None if keep_static(x) else x, tree)
+    nonjaxtype_tree = tree_map(lambda x: x if keep_static(x) else None, tree)
 
     return jaxtype_tree, nonjaxtype_tree
 
 def merge_jax_nonjax(jax_tree, nonjax_tree):
     def merge(jt, njt):
-        if njt == '__JAXTYPE_MARKER__':
-            # print("hihi")
+        if njt == None:
             return jt
         else:
             return njt
 
-    return tree_map(merge, jax_tree, nonjax_tree)
+    return tree_map(merge, jax_tree, nonjax_tree, is_leaf=lambda x: x is None)
 
 
 def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=None, **outer_kwargs):
