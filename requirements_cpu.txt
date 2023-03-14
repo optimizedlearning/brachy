@@ -6,3 +6,5 @@ tqdm
 transformers
 datasets
 omegaconf
+dill
+

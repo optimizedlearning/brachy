@@ -72,13 +72,7 @@ def StackedAttention(organizer, config, rng=None):
         AttentionBlock(config) for _ in range(num_layers)
     ])
 
-    organizer.ln = nn.LayerNorm(embed_dim)
-
-
     organizer.head = nn.Linear(embed_dim, vocab_size)
-
-
-    organizer.ln.register_aux('force_high_precision', True)
 
     
     organizer.set_apply(StackedAttention_apply)
@@ -98,9 +92,7 @@ def StackedAttention_apply(organizer, tokens):
 
     final_embed = organizer.trunk(combined_embed)
 
-    final_ln = organizer.ln(final_embed)
-
-    final_logits = organizer.head(final_ln)
+    final_logits = organizer.head(final_embed)
 
     return final_logits
 

@@ -22,13 +22,12 @@ def chain(base_tree, *funcs):
 
         for f in funcs:
             x = f(x)
-        update = {
+        update = su.fill_tree({
             'submodules': {
                 'base_tree': base_update
             },
-            'params': {},
-            'buffers': {}
-        }
+            'apply': apply
+        })
         return update, x
     
     tree = su.fill_tree({

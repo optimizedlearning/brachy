@@ -4,19 +4,16 @@ from jax.tree_util import tree_map
 from jax import numpy as jnp
 import jax
 
-def AdamW(model, lr=1.0, betas=(0.9, 0.999), weight_decay=0.01, eps=1e-8, params_filter=su.get_params, params_merger=su.merge_trees):
+def AdamW(model_tree, lr=1.0, betas=(0.9, 0.999), weight_decay=0.01, eps=1e-8, params_filter=su.get_params, params_merger=su.merge_trees):
     organizer = su.StateOrganizer()
-    organizer.base_lr = lr
     organizer.betas = betas
     organizer.weight_decay = weight_decay
     organizer.register_buffer('eps', eps)
     organizer.register_buffer('t', 0)
 
-    state = organizer.get_state()
+    organizer.update_global_config('lr', lr)
 
-    organizer.model_to_optimize = model
-
-    params, rest = params_filter(model[0])
+    params, rest = params_filter(model_tree)
 
     organizer.register_buffer(
         'per_variable_state',
@@ -29,13 +26,6 @@ def AdamW(model, lr=1.0, betas=(0.9, 0.999), weight_decay=0.01, eps=1e-8, params
         )
     )
 
-    # organizer.register_buffer(
-    #     'variance',
-    #     tree_map(
-    #         lambda p: jnp.zeros_like(p),
-    #         params
-    #     )
-    # )
 
     organizer.register_aux(
         'params_filter', params_filter
@@ -51,32 +41,28 @@ def AdamW(model, lr=1.0, betas=(0.9, 0.999), weight_decay=0.01, eps=1e-8, params
 
 def AdamW_apply(
     opt_tree,
-    global_config,
-    example_data,
+    opt_config,
     value_and_grad_fn,
-    lr=1.0):
+    *value_grad_args,
+    **value_grad_kwargs):
 
-    organizer = su.StateOrganizer(opt_tree, global_config)
+    organizer = su.StateOrganizer(opt_tree, opt_config)
 
-    (model_update, *value), grad = value_and_grad_fn(organizer.model_to_optimize.get_tree(), global_config, example_data)
+    (model, *value), grad = value_and_grad_fn(*value_grad_args, **value_grad_kwargs)
 
-    params, rest = organizer.params_filter(model_update)
+    params, rest = organizer.params_filter(model)
 
 
     organizer.t = organizer.t + 1
     t = organizer.t
     beta1 = organizer.betas[0]
     beta2 = organizer.betas[1]
-    lr *= organizer.base_lr
+
+    lr = opt_config['lr']
+
     weight_decay = organizer.weight_decay
     eps = organizer.eps
 
-    # be careful: it is important that grad is the first argument after the update function here!
-    # organizer.momentum = tree_map(
-    #     lambda g, m: m*beta1 + (1.0-beta1) * g,
-    #     grad,
-    #     organizer.momentum
-    # )
 
     organizer.per_variable_state = tree_map(
         lambda g, s: {
@@ -87,11 +73,6 @@ def AdamW_apply(
         organizer.per_variable_state
     )
 
-    # organizer.variance = tree_map(
-    #     lambda g, v: v*beta2 + (1.0-beta2) * g**2,
-    #     grad,
-    #     organizer.variance
-    # )
 
     def update(p, state):
         m = state['momentum']
@@ -107,10 +88,9 @@ def AdamW_apply(
         organizer.per_variable_state
     )
 
-    model_update = organizer.params_merger(rest, params)
-    organizer.model_to_optimize.update_tree(model_update)
+    updated_model = organizer.params_merger(rest, params)
 
-    return organizer.get_state_update(), *value
+    return organizer.get_state(), updated_model, *value
 
 
 

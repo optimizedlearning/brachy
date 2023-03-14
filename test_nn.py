@@ -103,7 +103,7 @@ def MyModule_apply(tree, global_config, x):
     x = module.mul * x
     x = module.fc2(x)
 
-    return module.get_state_update(), x
+    return module.get_state(), x
 
 class T_MyModule(torch.nn.Module):
 
@@ -161,7 +161,7 @@ def NextModule_apply(tree, global_config, x):
     x = jax.nn.relu(x)
     x = module.head(x)
 
-    return module.get_state_update(), x
+    return module.get_state(), x
 
 
 class T_NextModule(torch.nn.Module):

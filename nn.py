@@ -212,7 +212,7 @@ def Layernorm_apply(tree, global_config, x):
 
     ln = (x - e_x)/jnp.sqrt(v_x + module.eps) * module.weight + module.bias
 
-    return module.get_state_update(), ln
+    return module.get_state(), ln
 
 
 def Conv2d(
@@ -480,7 +480,7 @@ def MultiheadAttention_apply(tree, global_config, q, k, v, mask=None):
     values = einops.einsum(att, v, 'b n t1 t2, b n t2 h -> b n t1 h') # [B, N, T, T] x [B, N, T, H] -> [B, N, T, H]
     values = einops.rearrange(values, 'b n t h -> b t (n h)') # [B N T H] -> [B T C]
 
-    return module.get_state_update(), values
+    return module.get_state(), values
 
 def CausalSelfAttention(
     embed_dim,
@@ -517,7 +517,7 @@ def CausalSelfAttention_apply(tree, global_config, x):
     # A conditional will be ok even with jax.jit since it depends on the shape)
     causal_mask = jnp.tri(T, k=0).reshape((1, 1, T, T))
 
-    return module.get_state_update(), module.MHA(x, x, x, causal_mask)
+    return module.get_state(), module.MHA(x, x, x, causal_mask)
 
 def BatchNorm(num_features, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True, axis=None, batch_axis=None):
     organizer = su.StateOrganizer(global_config={'train_mode': True, 'batch_axis': batch_axis})

@@ -167,7 +167,7 @@ def train_loop(
     lr_scheduler = get_lr_scheduler(config)
 
     # JIT compile the train step.
-    train_step_jit = su.jit(train_step, static_argnames=['lr_scheduler', 'global_config'], donate_argnums=0)
+    train_step_jit = su.jit(train_step, donate_argnums=0)
 
     # statistics to track during training.
     token_count = jnp.array(0.0) # this prevents the jit from tracing again in the second round.
@@ -208,12 +208,12 @@ def train_loop(
         opt_tree = su.merge_trees(opt_tree, opt_update)
     
 
-        if is_number(log_data['loss']):
-            token_count += tokens
-            total_correct += log_data['correct']
-            total_loss += log_data['loss'].astype(jnp.float32) * tokens
-            running_loss = total_loss/token_count
-            running_accuracy = total_correct/token_count
+        # if is_number(log_data['loss']):
+        token_count += tokens
+        total_correct += log_data['correct']
+        total_loss += log_data['loss'].astype(jnp.float32) * tokens
+        running_loss = total_loss/token_count
+        running_accuracy = total_correct/token_count
 
 
         curtime = time.time()
@@ -237,7 +237,7 @@ def train_loop(
         pbar.set_description('Batch: %d, Current loss: %.3f, Running Loss: %.3f | Running Acc: %.3f%% (%d/%d)'
                      % (batch_idx, log_data['loss'], running_loss, 100.*running_accuracy, total_correct, token_count))
 
-        if tokens >= config.train.max_tokens:
+        if token_count >= config.train.max_tokens:
             return
 
 

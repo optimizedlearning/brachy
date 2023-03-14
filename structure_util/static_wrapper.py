@@ -89,7 +89,7 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
     # this decorator actually wraps a decorator (the argument "wrapper") itself, so we must return a decorator.
     # this function static_wrapper is what we will return.
     @wraps(wrapper)
-    def static_wrapper(fun, *wrapper_args, static_argnums=None , static_argnames=None, **wrapper_kwargs):
+    def static_wrapper(fun, *wrapper_args, static_argnums=None , static_argnames=None, static_returns=None, **wrapper_kwargs):
 
         # # Some checks to allow for default arguments specified in a decorator...
         # # this might be overly complicated a feature to have...
@@ -111,24 +111,21 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
 
 
         # check if static_argnums or static_argnames are specified as position arguments.
-        if 'static_argnums' in wrapper_paramnames and len(wrapper_args) >= wrapper_paramnames.index('static_argnums'):
-            static_argnums = wrapper_args[wrapper_argnames.index('static_argnums')]
-        if 'static_argnames' in wrapper_paramnames and len(wrapper_args) >= wrapper_paramnames.index('static_argnames'):
-            static_argnames = wrapper_args[wrapper_paramnames.index('static_argnames')]
+        def override_arg(value, name):
+            if name in wrapper_paramnames and len(wrapper_args) >= wrapper_paramnames.index(name):
+                value = wrapper_args[wrapper_argnames.index(name)]
 
-        # canonicalize static_argnums and static_argnames as lists.
-        if isinstance(static_argnums, int):
-            static_argnums = [static_argnums]
-        if isinstance(static_argnames, str):
-            static_argnames = [static_argnames]
+            # canonicalize value as list:
+            if isinstance(value, int) or isinstance(value, str):
+                value = [value]
+            if value is None:
+                value = []
+
+            return list(value)
         
-        if static_argnums is None:
-            static_argnums = []
-        if static_argnames is None:
-            static_argnames = []
-
-        static_argnums = list(static_argnums)
-        static_argnames = list(static_argnames)
+        static_argnums = override_arg(static_argnums, 'static_argnums')
+        static_argnames = override_arg(static_argnames, 'static_argnames')
+        static_returns = override_arg(static_returns, 'static_returns')
 
 
         # get information about the function we are going to wrap.
@@ -179,7 +176,6 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
             tree_kwargs_statics = {}
             for argnum, arg in enumerate(args):
                 if not su.is_structure_tree(arg):
-
                     jax_tree, nonjax_tree = split_jax_nonjax(arg)
                     split_args.append(jax_tree)
                     tree_args_statics[argnum] = nonjax_tree
@@ -214,6 +210,7 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
                 'tree_args_statics': tree_args_statics,
                 'structure_tree_kwargs_statics': structure_tree_kwargs_statics,
                 'tree_kwargs_statics': tree_kwargs_statics,
+                'static_returns': static_returns,
             })
 
             # cache miss - define a function to wrap with the base wrapper.
@@ -223,18 +220,18 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
                     for i in range(len(args)):
                         if i in static_argnums:
                             args_with_statics[i] = static_args[i]
-                        if i in structure_tree_args_statics:
+                        elif i in structure_tree_args_statics:
                             args_with_statics[i] = su.merge_trees(args_with_statics[i], structure_tree_args_statics[i])
-                        if i in tree_args_statics:
+                        elif i in tree_args_statics:
                             args_with_statics[i] = merge_jax_nonjax(args_with_statics[i], tree_args_statics[i])
                     
                     kwargs_with_statics = dict(kwargs)
                     for k in kwargs:
                         if k in static_argnames:
                             kwargs_with_statics[k] = static_kwargs[k]
-                        if k in structure_tree_kwargs_statics:
+                        elif k in structure_tree_kwargs_statics:
                             kwargs_with_statics[k] = su.merge_trees(kwargs_with_statics[k], structure_tree_args_statics[k])
-                        if k in tree_kwargs_statics:
+                        elif k in tree_kwargs_statics:
                             kwargs_with_statics[k] = merge_jax_nonjax(kwargs_with_statics[k], tree_kwargs_statics[k])
                     values = fun(*args_with_statics, **kwargs_with_statics)
 
@@ -246,7 +243,16 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
                     returned_structure_statics = {}
                     split_values = list(values)
                     for i, v in enumerate(values):
-                        jax_tree, nonjax_tree = split_jax_nonjax(v)
+                        if i in static_returns:
+                            jax_tree = None
+                            nonjax_tree = (v, 'manual_static')
+                        elif su.is_structure_tree(v):
+                            jax_tree, nonjax_tree = su.split_non_static(v)
+                            nonjax_tree = (nonjax_tree, 'structure_tree')
+                        else:
+                            jax_tree, nonjax_tree = split_jax_nonjax(v)
+                            nonjax_tree = (nonjax_tree, 'discovered_static')
+
                         if cached_calls[cache_key]['returned_structure_statics'] is None:
                             returned_structure_statics[i] = nonjax_tree
                         split_values[i] = jax_tree
@@ -282,8 +288,15 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
                 values = [values]
             values = list(values)
             
-            for i, v in cached_calls[cache_key]['returned_structure_statics'].items():
-                values[i] = merge_jax_nonjax(values[i], v)
+            for i, (v, static_type) in cached_calls[cache_key]['returned_structure_statics'].items():
+                if static_type == 'manual_static':
+                    values[i] = v
+                elif static_type == 'structure_tree':
+                    values[i] = su.merge_trees(values[i], v)
+                elif static_type == 'discovered_static':
+                    values[i] = merge_jax_nonjax(values[i], v)
+                else:
+                    raise ValueError('unknown static type!')
             
             if len(values) == 1:
                 return values[0]

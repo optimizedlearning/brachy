@@ -75,17 +75,17 @@ def same_trees(*trees, keys_to_exclude=[]):
 def apply(tree, global_config, x, y):
     value = tree['params']['a'] + x -y
     split = tree.filter_keys(['params', 'buffers'])
-    return split, value
+    return tree, value
 
 def apply_child(tree, global_config, x, y):
     value = 3*tree['params']['f'] + tree['buffers']['g'] + x -y
     split = tree.filter_keys(['params', 'buffers'])
-    return split, value
+    return tree, value
 
 def apply_grand_child(tree, global_config, x, y):
     value = -1*tree['params']['f'] + tree['buffers']['g'] + x -y
     split = tree.filter_keys(['params', 'buffers'])
-    return split, value
+    return tree, value
 
 grand_child = {
     'params': {
@@ -274,7 +274,7 @@ def child_apply(tree, global_config, x):
 
     y = y * organizer.w
 
-    return organizer.get_state_update(), y
+    return organizer.get_state(), y
 
 
 def root_module():
@@ -302,7 +302,7 @@ def root_apply(tree, global_config, x):
 
     organizer.a = jnp.array([1,1,1,2,2])
 
-    return organizer.get_state_update(), y_final
+    return organizer.get_state(), y_final
 
 def alt_root_apply(tree, global_config, x):
 
@@ -316,7 +316,7 @@ def alt_root_apply(tree, global_config, x):
 
     y_final = y1+y2+y3 + organizer.a
 
-    return organizer.get_state_update(), y_final
+    return organizer.get_state(), y_final
 
     
     
@@ -598,6 +598,41 @@ class TestStructureUtils(unittest.TestCase):
         assert jnp.allclose(value, 20)
         assert jnp.allclose(grad['params']['bias'], 2*2*jnp.ones(5)), f"bias: {grad['params']['bias']}"
         assert jnp.allclose(grad['params']['weight'], 2*2*jnp.ones((5,5))), f"bias: {grad['params']['bias']}"
+
+    def test_jit_static_return(self):
+
+        trace_count = 0
+
+        def func(tree, global_config, x, z):
+            nonlocal trace_count
+            trace_count += 1
+            organizer = su.StateOrganizer(tree, global_config)
+            y = jnp.matmul(x, organizer.weight)+ organizer.bias
+            return organizer.get_state(), global_config, z
+
+        j_func = su.jit(func, static_argnums=3, static_returns=2)
+
+        lin, global_config = nn.Linear(5,5, rng=jax.random.PRNGKey(0))
+        lin['aux'] = {
+            'number': 10
+        }
+        global_config['foo'] = 'hihihi'
+        lin['params']['weight'] = jnp.eye(5)
+        lin['params']['bias'] = jnp.ones(5)
+        x = jnp.ones(5)
+        z= {'f': 0, 'g': False}
+
+        state, y, z = j_func(lin, global_config, x, z)
+        # state, y, z = j_func(lin, global_config, x, z)
+
+        assert state['aux']['number'] == 10
+        assert not isinstance(state['aux']['number'], Array)
+
+        assert z['g'] == False
+        assert z['f'] == 0
+        assert not isinstance(z['f'], Array)
+
+
 
     def test_jit_notree(self):
 

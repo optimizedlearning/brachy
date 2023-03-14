@@ -4,39 +4,42 @@ from jax.tree_util import tree_map
 from jax import numpy as jnp
 import jax
 
-def SGD(model, lr=1.0, momentum=0.0, weight_decay=0.0, params_filter=su.get_params, params_merger=su.merge_trees):
+def SGD(model_tree, lr=1.0, momentum=0.0, weight_decay=0.0, params_filter=su.get_params, params_merger=su.merge_trees):
     organizer = su.StateOrganizer()
-    organizer.model_to_optimize = model
-
-    params, rest = params_filter(model[0])
+    params, rest = params_filter(model_tree)
     organizer.register_buffer(
         'momentum_buffer', tree_map(lambda x: jnp.zeros_like(x), params)
     )
     organizer.momentum_coef = momentum
-    organizer.lr_base = lr
     organizer.weight_decay = weight_decay
     organizer.register_aux('params_filter', params_filter)
     organizer.register_aux('params_merger', params_merger)
+
+    organizer.update_global_config('lr', lr)
     
     return organizer.create_module(SGD_apply)
 
-
+# for now, we assume the the first return value of value_and_grad_fn
+# is the model update. Maybe in future we allow this to be configurable...
 def SGD_apply(
-    tree,
-    global_config,
-    example_data,
+    opt_tree,
+    opt_config,
     value_and_grad_fn,
-    lr=1.0):
-    organizer = su.StateOrganizer(tree, global_config)
+    *value_grad_args,
+    **value_grad_kwargs
+    ):
+    organizer = su.StateOrganizer(opt_tree, opt_config)
 
     momentum_buffer = organizer.momentum_buffer
     momentum_coef = organizer.momentum_coef
-    lr = organizer.lr_base * lr
+
+    lr = opt_config['lr']
+
     weight_decay = organizer.weight_decay
 
-    (model_update, *value), grad = value_and_grad_fn(organizer.model_to_optimize.get_tree(), global_config, example_data)
+    (model, *value), grad = value_and_grad_fn(*value_grad_args, **value_grad_kwargs)
 
-    params, rest = organizer.params_filter(model_update)
+    params, rest = organizer.params_filter(model)
 
     momentum_buffer_next = tree_map(
         lambda m, g, p: m * momentum_coef +  (g + weight_decay * p),
@@ -50,11 +53,9 @@ def SGD_apply(
         params, momentum_buffer_next
     )
 
-    model_update = organizer.params_merger(rest, params)
+    updated_model = organizer.params_merger(rest, params)
 
-    organizer.model_to_optimize.update_tree(model_update)
-
-    return organizer.get_state_update(), *value
+    return organizer.get_state(), updated_model, *value
 
 
 

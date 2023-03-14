@@ -27,6 +27,6 @@ train:
 
     warmup_tokens: 1e7
 
-    clip: 1.0
+    clip: 0.1
 
 
