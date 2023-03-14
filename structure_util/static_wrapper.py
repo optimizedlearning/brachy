@@ -1,6 +1,6 @@
 
 from jax.tree_util import tree_flatten, tree_map, tree_reduce
-import structure_util as su
+import structure_util.structure_util_core as su
 import jax
 import inspect
 from functools import wraps

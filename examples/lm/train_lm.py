@@ -51,24 +51,24 @@ def main():
 
     print("Initializing model...")
     rng = jax.random.PRNGKey(0)
-    model_tree, global_config = StackedAttention(config.model, rng=rng)
+    model_tree, model_config = StackedAttention(config.model, rng=rng)
     # model is a tuple: (model_tree, model_config)
     
     if config.train.mixed_precision:
-        model_tree = optim.mixed_precision_tree(model_tree, config.train.mixed_precision_scalar)
+        model_tree, model_config = optim.mixed_precision_tree((model_tree, model_config), config.train.mixed_precision_scalar)
 
     # model_state, model_apply = su.bind_module(model_tree, model_config)
 
 
     print("Initializing optimizer...")
     optconf = config.train.optimizer
-    opt = optim.AdamW((model_tree, global_config), lr=1.0, betas=list(optconf.betas), weight_decay=optconf.weight_decay)
+    opt = optim.AdamW(model_tree, lr=1.0, betas=list(optconf.betas), weight_decay=optconf.weight_decay)
     # if config.train.mixed_precision:
     #     opt = optim.add_mixed_precision(
     #         opt,
     #         config.train.mixed_precision_scalar)
 
-    opt_tree, global_config = optim.process_grads.clip_grads(
+    opt_tree, opt_config = optim.process_grads.clip_grads(
         opt,
         clip_value=config.train.optimizer.clip, clip_type='per_coordinate')
 
@@ -80,21 +80,21 @@ def main():
     wandb.init(project='hax_c4')
     wandb.config.update(OmegaConf.to_container(config))
 
-    global_config['args_config'] = config
-
     print("Starting training loop...")
     train_loop(
         config,
         opt_tree,
-        global_config,
+        opt_config,
+        model_tree,
+        model_config,
         train_loader)
 
 
 
-def loss(model_tree, global_config, batch):
-    inputs, targets = batch
+def loss(model_tree, model_config, inputs, targets):
+    # inputs, targets = batch
 
-    model_update, outputs = su.apply_tree(model_tree, global_config, inputs)
+    model_update, outputs = su.apply_tree(model_tree, model_config, inputs)
 
     cross_entropy = F.softmax_cross_entropy(outputs, targets)
 
@@ -102,14 +102,16 @@ def loss(model_tree, global_config, batch):
 
 def train_step(
     opt_tree,
-    global_config,
+    opt_config,
+    model_tree,
+    model_config,
     inputs,
     targets,
     token_count,
     lr_scheduler):
 
 
-    if global_config['args_config'].train.mixed_precision:
+    if model_config.get('mixed_precision', False):
         loss_fn = optim.mixed_precision_loss(loss)
     else:
         loss_fn = loss
@@ -120,7 +122,9 @@ def train_step(
 
     lr = lr_scheduler(token_count)
 
-    opt_update, cross_entropy, outputs = su.apply_tree(opt_tree, global_config, (inputs, targets), loss_and_grad, lr=lr)
+    hparams  = {'lr': lr}
+
+    opt_update, model_update, cross_entropy, outputs = su.apply_tree(opt_tree, opt_config, hparams, loss_and_grad, model_tree, model_config, inputs, targets)
 
     # opt_state, model_jax_types, cross_entropy, outputs = opt_apply(opt_state, model_tree, (inputs, targets), l_t, lr=lr)
     # This is a bit annoying... a jitted function cannot return a non-jax type, so we can't return the entire tree...
@@ -138,7 +142,7 @@ def train_step(
         'lr_schedule': lr
     }
 
-    return opt_update, log_data
+    return opt_update, model_update, log_data
 
 def get_lr_scheduler(config):
     schedule = config.train.optimizer.get('schedule')
@@ -160,14 +164,16 @@ def get_lr_scheduler(config):
 def train_loop(
     config,
     opt_tree,
-    global_config,
+    opt_config,
+    model_tree,
+    model_config,
     train_loader):
 
 
     lr_scheduler = get_lr_scheduler(config)
 
     # JIT compile the train step.
-    train_step_jit = su.jit(train_step, donate_argnums=0)
+    train_step_jit = su.jit(train_step, donate_argnums=(0,2), static_argnums=(1,3))
 
     # statistics to track during training.
     token_count = jnp.array(0.0) # this prevents the jit from tracing again in the second round.
@@ -193,7 +199,7 @@ def train_loop(
 
         # old_opt_state = opt_state
         # old_model_state = model_state
-        opt_update, log_data = train_step_jit(opt_tree, global_config, inputs, targets, token_count, lr_scheduler)
+        opt_tree, model_tree, log_data = train_step_jit(opt_tree, opt_config, model_tree, model_config, inputs, targets, token_count, lr_scheduler)
         
 
         # this step feels hacky... ideally train_step would just return the entire updated tree, but 
@@ -205,7 +211,7 @@ def train_loop(
         # options include designing a clearer api for doing the following merge, or coming up with a way
         # to allow returning entire structure trees that doesn't feel too dangerous. For example, if we assume all non jax-type
         # return values are invariant to the jax-type arguments, then it could probably be done...
-        opt_tree = su.merge_trees(opt_tree, opt_update)
+        # opt_tree = su.merge_trees(opt_tree, opt_update)
     
 
         # if is_number(log_data['loss']):

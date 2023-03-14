@@ -32,6 +32,7 @@ def clip_grads(optimizer, clip_value=1.0, clip_type='per_coordinate'):
 def clip_apply(
     opt_tree,
     opt_config,
+    hparams,
     value_and_grad_fn,
     *args,
     **kwargs):
@@ -51,7 +52,7 @@ def clip_apply(
         return out, grad
 
     base_opt = opt_tree['submodules']['optimizer']
-    base_update, *output = su.apply_tree(base_opt, opt_config, new_value_and_grad_fn, *args, **kwargs)
+    base_update, *output = su.apply_tree(base_opt, opt_config, hparams, new_value_and_grad_fn, *args, **kwargs)
 
     update = dict(opt_tree)
     update['submodules']['optimizer'] = base_update

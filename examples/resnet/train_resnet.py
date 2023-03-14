@@ -16,7 +16,8 @@ import os
 import argparse
 
 from resnet import ResNet18, PreActResNet18
-from structure_util import StateOrganizer, bind_module, unbind_module, split_tree, merge_trees, state_value_and_grad
+import structure_util as su
+# from structure_util import StateOrganizer, bind_module, unbind_module, split_tree, merge_trees, state_value_and_grad
 from nn import functional as F
 from tqdm import tqdm
 import jax
@@ -79,40 +80,22 @@ def main():
     print('==> Building model..')
     rng = jax.random.PRNGKey(0)
     if args.arch == 'resnet18':
-        net, global_config = ResNet18(rng)
+        model_tree, model_config = ResNet18(rng)
     elif args.arch == 'preactresnet18':
-        net, global_config = PreActResNet18(rng)
+        model_tree, model_config = PreActResNet18(rng)
 
 
-    state, train_apply = bind_module(net, global_config)
-    test_apply = train_apply.bind_global_config({'train_mode': False, 'batch_axis': None})
+    opt_tree, opt_config = SGD(model_tree, lr=args.lr, momentum=0.9, weight_decay=5e-4)
 
-
-    sgd_state, sgd_apply = SGD(state, lr=args.lr, momentum=0.9, weight_decay=5e-4)
-
-
-    train_step_partial = Partial(
-        train_step,
-        apply=train_apply,
-        opt_step=sgd_apply,
-        max_epochs=200,
-    )
-
-
-    test_step_partial = Partial(
-        test_step,
-        apply=test_apply
-    )
-
-    train_step_jit = jax.jit(train_step_partial, donate_argnums=(0, 1))
-    test_step_jit = jax.jit(test_step_partial)
+    train_step_jit = su.jit(train_step, donate_argnums=(0, 2), static_argnums=(1,3))
+    test_step_jit = su.jit(test_step, static_argnums=1)
 
 
     wandb.init(project="jax_resnet")
     wandb.config.update(args)
     for epoch in range(200):
-        state, sgd_state = train_epoch(epoch, state, sgd_state, trainloader, train_step_jit)
-        test(epoch, state, testloader, test_step_jit)
+        opt_tree, model_tree = train_epoch(epoch, opt_tree, opt_config, model_tree, model_config, trainloader, train_step_jit)
+        test(epoch, model_tree, model_config, testloader, test_step_jit)
 
 
 
@@ -120,26 +103,34 @@ def cosine_annealing(epoch, max_epochs, eta_max, eta_min):
     return (1 + jnp.cos(jnp.pi * epoch / max_epochs)) * (eta_max - eta_min) * 0.5 + eta_min
 
 
-def loss(state, batch, apply):
-    inputs, targets = batch
+def loss(model_tree, model_config, inputs, targets):
 
-    new_state, output = apply(state, inputs)
+    new_tree, output = su.apply_tree(model_tree, model_config, inputs)
 
     cross_entropy = F.softmax_cross_entropy(output, targets)
-    return new_state, output, cross_entropy
+    return new_tree, output, cross_entropy
 
 
-def train_step(state, opt_state, batch, epoch, apply, opt_step, eta_max=1.0, eta_min=0.0, max_epochs=200):
+def train_step(opt_tree, opt_config, model_tree, model_config, inputs, targets, epoch, eta_max=1.0, eta_min=0.0, max_epochs=200):
 
 
-    loss_and_grad = state_value_and_grad(loss, output_num=1)
-    l_t = lambda s, b: loss_and_grad(s, b, apply)
+    loss_and_grad = su.tree_value_and_grad(loss, output_num=1)
 
     lr = cosine_annealing(epoch, max_epochs, eta_max, eta_min)
 
-    opt_state, state, output, cross_entropy = opt_step(opt_state, state, batch, l_t, lr=lr)
+    hparams = {
+        'lr': lr
+    }
 
-    inputs, targets = batch
+    opt_tree, model_tree, output, cross_entropy = su.apply_tree(
+        opt_tree,
+        opt_config,
+        hparams,
+        loss_and_grad,
+        model_tree,
+        model_config,
+        inputs,
+        targets)
 
     predictions = jnp.argmax(output, axis=-1)
     correct = jnp.sum(predictions == targets)
@@ -150,12 +141,12 @@ def train_step(state, opt_state, batch, epoch, apply, opt_step, eta_max=1.0, eta
         'loss': cross_entropy,
     }
 
-    return state, opt_state, log_data
+    return opt_tree, model_tree, log_data
 
 
-def test_step(state, batch, apply):
+def test_step(model_tree, model_config, batch):
     inputs, targets = batch
-    _, output, cross_entropy = loss(state, batch, apply)
+    _, output, cross_entropy = loss(model_tree, model_config, inputs, targets)
     predictions = jnp.argmax(output, axis=-1)
     correct = jnp.sum(predictions == targets)
 
@@ -163,7 +154,7 @@ def test_step(state, batch, apply):
 
 
 # Training
-def train_epoch(epoch, state, opt_state, trainloader, train_step_jit):
+def train_epoch(epoch, opt_tree, opt_config, model_tree, model_config, trainloader, train_step_jit):
     print('\nEpoch: %d' % epoch)
     train_loss = 0
     correct = 0
@@ -178,7 +169,7 @@ def train_epoch(epoch, state, opt_state, trainloader, train_step_jit):
 
         num_targets = targets.shape[0]
 
-        state, opt_state, log_data = train_step_jit(state, opt_state, batch, epoch)
+        opt_tree, model_tree, log_data = train_step_jit(opt_tree, opt_config, model_tree, model_config, inputs, targets, epoch)
 
         cross_entropy = log_data['loss']
         batch_correct = log_data['correct']
@@ -200,10 +191,10 @@ def train_epoch(epoch, state, opt_state, trainloader, train_step_jit):
         'train/lr': log_data['lr'],
     })
 
-    return state, opt_state
+    return opt_tree, model_tree
 
 
-def test(epoch, state, testloader, test_step_jit):
+def test(epoch, model_tree, model_config, testloader, test_step_jit):
     test_loss = 0
     correct = 0
     total = 0
@@ -215,7 +206,7 @@ def test(epoch, state, testloader, test_step_jit):
         inputs, targets = inputs.detach_().numpy(), targets.detach_().numpy()
         batch = (inputs, targets)
         num_targets = targets.shape[0]
-        test_loss, batch_correct = test_step_jit(state, batch)
+        test_loss, batch_correct = test_step_jit(model_tree, model_config, batch)
 
         total_loss += test_loss
         batches += 1

@@ -11,7 +11,7 @@ def AdamW(model_tree, lr=1.0, betas=(0.9, 0.999), weight_decay=0.01, eps=1e-8, p
     organizer.register_buffer('eps', eps)
     organizer.register_buffer('t', 0)
 
-    organizer.update_global_config('lr', lr)
+    organizer.lr = lr
 
     params, rest = params_filter(model_tree)
 
@@ -40,9 +40,10 @@ def AdamW(model_tree, lr=1.0, betas=(0.9, 0.999), weight_decay=0.01, eps=1e-8, p
 
 
 def AdamW_apply(
-    opt_tree,
-    opt_config,
-    value_and_grad_fn,
+    opt_tree: dict,
+    opt_config: dict,
+    hparams: dict,
+    value_and_grad_fn: callable,
     *value_grad_args,
     **value_grad_kwargs):
 
@@ -58,7 +59,9 @@ def AdamW_apply(
     beta1 = organizer.betas[0]
     beta2 = organizer.betas[1]
 
-    lr = opt_config['lr']
+    lr = organizer.lr
+    if 'lr' in hparams:
+        lr *= hparams['lr']
 
     weight_decay = organizer.weight_decay
     eps = organizer.eps

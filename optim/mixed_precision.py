@@ -125,7 +125,10 @@ def mixed_precision_loss(loss):#, loss_scalar=1.0, output_type=jnp.float32):
     return mixed_loss
 
 
-def mixed_precision_tree(float_tree, loss_scalar=1.0, output_type=jnp.float32):
+def mixed_precision_tree(tree_and_config, loss_scalar=1.0, output_type=jnp.float32):
+    float_tree = tree_and_config[0]
+    config = tree_and_config[1]
+
     root_apply = float_tree['apply']
     half_tree = su.structure_tree_map(cast_node, float_tree)
 
@@ -137,4 +140,6 @@ def mixed_precision_tree(float_tree, loss_scalar=1.0, output_type=jnp.float32):
         'output_type': output_type
     }
 
-    return half_tree
+    config['mixed_precision'] = True
+
+    return half_tree, config

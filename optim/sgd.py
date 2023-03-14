@@ -14,17 +14,17 @@ def SGD(model_tree, lr=1.0, momentum=0.0, weight_decay=0.0, params_filter=su.get
     organizer.weight_decay = weight_decay
     organizer.register_aux('params_filter', params_filter)
     organizer.register_aux('params_merger', params_merger)
-
-    organizer.update_global_config('lr', lr)
+    organizer.lr = lr
     
     return organizer.create_module(SGD_apply)
 
 # for now, we assume the the first return value of value_and_grad_fn
 # is the model update. Maybe in future we allow this to be configurable...
 def SGD_apply(
-    opt_tree,
-    opt_config,
-    value_and_grad_fn,
+    opt_tree: dict,
+    opt_config: dict,
+    hparams: dict,
+    value_and_grad_fn: callable,
     *value_grad_args,
     **value_grad_kwargs
     ):
@@ -33,7 +33,9 @@ def SGD_apply(
     momentum_buffer = organizer.momentum_buffer
     momentum_coef = organizer.momentum_coef
 
-    lr = opt_config['lr']
+    lr = organizer.lr
+    if 'lr' in hparams:
+        lr *= hparams['lr']
 
     weight_decay = organizer.weight_decay
 
