@@ -16,7 +16,7 @@ import structure_util as su
 
 from optim.sgd import SGD
 from optim.adamw import AdamW
-from optim import mixed_precision_tree, mixed_precision_loss
+from optim import mixed_precision_tree, mixed_precision_loss, get_model
 
 from optim.process_grads import clip_grads
 
@@ -343,6 +343,6 @@ class TestSGD(unittest.TestCase):
 
         tree, value = train_step(tree, global_config, w)
 
-        new_x = tree['submodules']['optimizer']['submodules']['model_to_optimize']['params']['x']
+        new_x = get_model(tree)['params']['x']
 
         assert jnp.allclose(new_x, jnp.array([0.0, 2.0])), f"x was unexpected value: {new_x}"

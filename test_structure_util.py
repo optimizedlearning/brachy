@@ -3,6 +3,8 @@ import numpy as np
 from jax import numpy as jnp
 import nn
 import rng_util
+
+from tempfile import TemporaryFile
 # from jax.tree_util import tree_map, tree_reduce
 
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
@@ -752,3 +754,37 @@ class TestStructureUtils(unittest.TestCase):
 
         self.assertTrue(same_dicts(limited_merged, filtered))
 
+
+    def test_checkpoint_save(self):
+
+        fp = TemporaryFile()
+
+        tree, global_config = root_module()
+
+        su.checkpoint.save(tree, global_config, fp)
+
+        fp.seek(0)
+
+        l_tree, l_global_config = su.checkpoint.load(fp)
+
+        fp.close()
+
+        x = jnp.ones(5)
+
+        update, y = su.apply_tree(tree, global_config, x)
+        tree = su.merge_trees(tree, update)
+
+        update, l_y = su.apply_tree(l_tree, global_config, x)
+        l_tree = su.merge_trees(l_tree, update)
+
+
+
+        update, y = su.apply_tree(tree, global_config, x)
+        tree = su.merge_trees(tree, update)
+
+        update, l_y = su.apply_tree(l_tree, global_config, x)
+        l_tree = su.merge_trees(l_tree, update)
+
+        
+        assert jnp.allclose(y, l_y)
+        assert same_trees(tree, l_tree, keys_to_exclude=['apply'])
