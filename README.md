@@ -14,7 +14,9 @@ Probably you should create a separate environment for GPU vs CPU and run the mod
 I'm not sure the GPU parts will install correctly. You can try replacing `requirements.txt` with `requirements_cpu.txt` for a CPU install. I've asked RCS to just provide a recent Jax installation via the module system, so hopefully these issues will go away.
 
 ## Better JIT wrapper
-First, it is very annoying that `jax.jit` cannot handle dictionaries as static arguments, or pytrees where some arguments are static and some can be traced, or functions that return static values. So, we provide a general wrapper in `structure_util.improved_static` that takes care of this:
+First, it is very annoying that `jax.jit` cannot handle dictionaries as static arguments, or arguments that are pytree where some values are static and some can be traced, or functions that return static values. So, we provide a general wrapper in `structure_util.improved_static` that takes care of this by automatically separating  out traceable and non-traceable components of arguments before 
+passing to `jit`. It also can handle non-jaxtypes in return values. However, be careful with these: we assume that any non-jaxtype in a return value must be a fixed function of
+the static arguments and the shape of the traced arguments (i.e. their values do not change unless the function needs to be re-traced).
 ```
 import jax
 from jax import numpy as jnp
