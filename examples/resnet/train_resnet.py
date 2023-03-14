@@ -16,17 +16,16 @@ import os
 import argparse
 
 from resnet import ResNet18, PreActResNet18
-import structure_util as su
-# from structure_util import StateOrganizer, bind_module, unbind_module, split_tree, merge_trees, state_value_and_grad
-from nn import functional as F
+from brachy import structure_util as su
+from brachy.nn import functional as F
 from tqdm import tqdm
 import jax
 from jax import numpy as jnp
 from jax.tree_util import tree_map, Partial
 
-from optim.sgd import SGD
+from brachy.optim.sgd import SGD
 
-from optional_module import optional_module
+from brachy.optional_module import optional_module
 import wandb
 
 

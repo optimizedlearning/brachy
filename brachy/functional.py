@@ -3,7 +3,7 @@ import jax
 from jax import numpy as jnp
 from jax import lax
 
-import structure_util as su
+from . import structure_util as su
 import numpy as np
 
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike

@@ -1,4 +1,4 @@
-# HAX
+# Brachy
 ## A (increasingly less) simple neural network library on top of JAX.
 
 BU SCC setup instructions:
@@ -20,7 +20,7 @@ the static arguments and the shape of the traced arguments (i.e. their values do
 ```
 import jax
 from jax import numpy as jnp
-import structure_util as su
+from brachy import structure_util as su
 
 jit  = su.jit
 # su.jit is an alias for su.improved_static(jax.jit).

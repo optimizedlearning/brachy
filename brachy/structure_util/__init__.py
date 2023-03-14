@@ -1,6 +1,6 @@
 
-from structure_util.structure_util_core import *
+from .structure_util_core import *
 
-from structure_util.static_wrapper import jit, improved_static
+from .static_wrapper import jit, improved_static
 
-import structure_util.checkpoint as checkpoint
+from . import checkpoint

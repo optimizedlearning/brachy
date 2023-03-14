@@ -4,13 +4,13 @@ from jax import numpy as jnp
 from jax import lax
 from jax.tree_util import tree_map, tree_flatten, tree_unflatten
 
-import rng_util
+from . import rng_util
 
 from jax.tree_util import Partial
 
 import einops
 
-import functional
+from . import functional
 import pprint
 import gc
 
@@ -22,7 +22,7 @@ from typing import overload, Any, Callable, Literal, Optional, Sequence, Tuple, 
 
 import functools
 
-import structure_util as su
+from . import structure_util as su
 
 def Identity():
 

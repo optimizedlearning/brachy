@@ -3,18 +3,18 @@
 
 import sys
 # I'll fix this later once I actually understand the python import system...
-sys.path.append('..')
+# sys.path.append('..')
 sys.path.append('.')
 
-from structure_util import StateOrganizer
-import structure_util as su
+from brachy.structure_util import StateOrganizer
+from brachy import structure_util as su
 
 import jax
 from jax import numpy as jnp
 from jax.tree_util import Partial
-import rng_util
-import nn
-from nn import functional as F
+from brachy import rng_util
+from brachy import nn
+from brachy.nn import functional as F
 
 
 def BasicBlock(expansion, in_planes, planes, stride=1, rng=None):

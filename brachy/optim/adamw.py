@@ -1,5 +1,5 @@
 
-import structure_util as su
+from brachy import structure_util as su
 from jax.tree_util import tree_map
 from jax import numpy as jnp
 import jax

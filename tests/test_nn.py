@@ -1,8 +1,8 @@
 import jax
 import numpy as np
 from jax import numpy as jnp
-import nn
-import rng_util
+from brachy import nn
+from brachy import rng_util
 from jax.tree_util import tree_map, tree_reduce
 
 import einops
@@ -12,7 +12,7 @@ import torch
 
 import unittest
 
-import structure_util as su
+from brachy import structure_util as su
 
 
 def allclose(a, b):

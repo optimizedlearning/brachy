@@ -1,11 +1,10 @@
-import structure_util as su
+from brachy import structure_util as su
 from jax.tree_util import tree_map, Partial
 from jax import numpy as jnp
 import jax
 
 import sys
-sys.path.append('.')
-import rng_util
+from brachy import  rng_util
 
 def randomly_scale(model_state, opt_state, opt_apply, distribution=jax.random.uniform, rng=None):
     state = {

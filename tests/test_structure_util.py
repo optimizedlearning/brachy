@@ -1,8 +1,8 @@
 import jax
 import numpy as np
 from jax import numpy as jnp
-import nn
-import rng_util
+from brachy import nn
+from brachy import rng_util
 
 from tempfile import TemporaryFile
 # from jax.tree_util import tree_map, tree_reduce
@@ -15,7 +15,7 @@ import einops
 import pprint
 import torch
 
-import structure_util as su
+from brachy import structure_util as su
 
 
 import unittest

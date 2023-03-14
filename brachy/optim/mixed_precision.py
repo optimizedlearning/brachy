@@ -1,4 +1,4 @@
-import structure_util as su
+from brachy import structure_util as su
 from jax.tree_util import tree_map, Partial
 from jax import numpy as jnp
 from jax import custom_vjp
@@ -7,9 +7,6 @@ from jax import custom_jvp
 
 import jax
 
-import sys
-sys.path.append('.')
-import structure_util as su
 
 
 def _cast_fp16(x):

@@ -13,13 +13,18 @@ import transformers
 from omegaconf import OmegaConf
 
 import sys
-
 sys.path.append('.')
-import structure_util as su
-import optim
-from nn import functional as F
 
-from optional_module import optional_module
+from brachy import structure_util as su
+from brachy import  optim
+from brachy.nn import functional as F
+from brachy.optional_module import optional_module
+
+# import structure_util as su
+# import optim
+# from nn import functional as F
+
+# from optional_module import optional_module
 import c4_loader 
 
 from stacked_attention import StackedAttention

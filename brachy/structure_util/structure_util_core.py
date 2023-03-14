@@ -29,7 +29,7 @@ from typing import (Any, Callable, Generator, Hashable, Iterable, List, Literal,
                     overload, cast)
 AxisName = Hashable
 
-import rng_util
+from brachy import rng_util
 from json import dumps, loads
 
 from functools import wraps

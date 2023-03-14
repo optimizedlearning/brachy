@@ -2,9 +2,7 @@ import jax
 from jax import numpy as jnp
 from jax.tree_util import tree_map
 
-import sys
-sys.path.append('.')
-import structure_util as su
+from brachy import  structure_util as su
 
 
 def _per_coordinate_clip(x, value):
