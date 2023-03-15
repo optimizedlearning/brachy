@@ -3,7 +3,8 @@ from . import (
     process_grads,
     sgd,
     adamw,
-    mixed_precision
+    mixed_precision,
+    random_scaling,
 )
 SGD = sgd.SGD
 AdamW = adamw.AdamW

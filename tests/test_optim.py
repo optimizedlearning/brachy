@@ -19,6 +19,7 @@ from brachy.optim.adamw import AdamW
 from brachy.optim import mixed_precision_tree, mixed_precision_loss
 
 from brachy.optim.process_grads import clip_grads
+from brachy.optim.random_scaling import random_scale
 
 
 
@@ -345,3 +346,162 @@ class TestSGD(unittest.TestCase):
         new_x = tree['params']['x']
 
         assert jnp.allclose(new_x, jnp.array([0.0, 2.0])), f"x was unexpected value: {new_x}"
+
+
+
+    def test_random_scale_offset(self):
+
+        rng = jax.random.PRNGKey(0)
+
+        tree = {
+            'params': {
+                'x': jnp.ones(2)
+            },
+            'buffers': {},
+            'aux': {},
+            'apply': lambda t, g, w: (t, 0.5*(t['params']['x'] * w)**2),
+            'submodules': {}
+        }
+        global_config = {}
+
+        w = jnp.array([6.0, -4.0])
+
+
+        opt_tree, opt_config = SGD(tree, lr=1.0, momentum=0.0, weight_decay=0.0)
+
+        opt_tree, opt_config = random_scale((opt_tree, opt_config), tree, distribution=lambda x: 0.75, rng=jax.random.PRNGKey(1))
+
+
+
+        def loss(tree, global_config, w):
+            tree, value = su.apply_tree(tree, global_config, w)
+            return  tree,  jnp.sum(value)
+
+        value_grad_fn = su.tree_value_and_grad(loss)
+
+
+
+        def train_step(opt_tree, opt_config, tree, global_config, w):
+            return su.apply_tree(opt_tree, opt_config, {}, value_grad_fn, tree, global_config, w)
+
+        train_step = su.jit(train_step, static_argnums=(1,3))
+
+        opt_tree, tree, value = train_step(opt_tree, opt_config, tree, global_config, w)
+
+        new_x = tree['params']['x']
+
+        assert jnp.allclose(new_x, jnp.array([-26.0, -11.0])), f"x was unexpected value: {new_x}"
+
+        opt_tree, tree, value = train_step(opt_tree, opt_config, tree, global_config, w)
+
+        new_x = tree['params']['x']
+
+        assert jnp.allclose(new_x, jnp.array([667.0, 117.0])), f"x was unexpected value: {new_x}"
+
+
+
+    def test_random_scale_independent_random(self):
+
+        rng = jax.random.PRNGKey(0)
+
+        x = jnp.ones(1)
+        tree = {
+            'params': {
+                'x': x
+            },
+            'buffers': {},
+            'aux': {},
+            'apply': lambda t, g: (t, jnp.abs(t['params']['x'])),
+            'submodules': {}
+        }
+        global_config = {}
+
+
+        opt_tree, opt_config = SGD(tree, lr=1.0, momentum=0.0, weight_decay=0.0)
+
+        opt_tree, opt_config = random_scale((opt_tree, opt_config), tree, rng=jax.random.PRNGKey(1))
+
+
+
+        def loss(tree, global_config):
+            tree, value = su.apply_tree(tree, global_config)
+            return  tree,  jnp.sum(value)
+
+        value_grad_fn = su.tree_value_and_grad(loss)
+
+
+
+        def train_step(opt_tree, opt_config, tree, global_config):
+            return su.apply_tree(opt_tree, opt_config, {}, value_grad_fn, tree, global_config)
+
+        train_step = su.jit(train_step, static_argnums=(1,3))
+
+        opt_tree, tree, value = train_step(opt_tree, opt_config, tree, global_config)
+
+        new_x = tree['params']['x']
+
+        offset = new_x - x
+        
+        true_params = opt_tree['buffers']['true_params']['params']['x']
+        assert jnp.allclose(true_params, jnp.array([0.0])), f"x was unexpected value: {true_params}"
+
+        opt_tree, tree, value = train_step(opt_tree, opt_config, tree, global_config)
+
+        offset2 = tree['params']['x'] - new_x
+
+        true_params = opt_tree['buffers']['true_params']['params']['x']
+        assert jnp.allclose(true_params, jnp.array([-1.0])), f"x was unexpected value: {true_params}"
+        
+        assert not jnp.allclose(offset, offset2)
+
+
+
+
+    def test_random_scale_no_interpolate(self):
+
+        rng = jax.random.PRNGKey(0)
+
+        tree = {
+            'params': {
+                'x': jnp.ones(2)
+            },
+            'buffers': {},
+            'aux': {},
+            'apply': lambda t, g, w: (t, 0.5*(t['params']['x'] * w)**2),
+            'submodules': {}
+        }
+        global_config = {}
+
+        w = jnp.array([6.0, -4.0])
+
+
+        opt_tree, opt_config = SGD(tree, lr=1.0, momentum=0.0, weight_decay=0.0)
+
+        opt_tree, opt_config = random_scale((opt_tree, opt_config), tree, distribution=lambda x: 0.75, interpolate=False, rng=jax.random.PRNGKey(1))
+
+
+
+        def loss(tree, global_config, w):
+            tree, value = su.apply_tree(tree, global_config, w)
+            return  tree,  jnp.sum(value)
+
+        value_grad_fn = su.tree_value_and_grad(loss)
+
+
+
+        def train_step(opt_tree, opt_config, tree, global_config, w):
+            return su.apply_tree(opt_tree, opt_config, {}, value_grad_fn, tree, global_config, w)
+
+        train_step = su.jit(train_step, static_argnums=(1,3))
+
+        opt_tree, tree, value = train_step(opt_tree, opt_config, tree, global_config, w)
+
+        new_x = tree['params']['x']
+
+        assert jnp.allclose(new_x, jnp.array([-26.0, -11.0])), f"x was unexpected value: {new_x}"
+
+        opt_tree, tree, value = train_step(opt_tree, opt_config, tree, global_config, w)
+
+        new_x = tree['params']['x']
+
+        assert jnp.allclose(new_x, jnp.array([676.0, 121.0])), f"x was unexpected value: {new_x}"

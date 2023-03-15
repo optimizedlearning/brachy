@@ -823,3 +823,16 @@ class TestStructureUtils(unittest.TestCase):
         
         assert jnp.allclose(y, l_y)
         assert same_trees(tree, l_tree, keys_to_exclude=['apply'])
+
+    def test_organizer_multiple_return_values(self):
+
+        organizer = su.StateOrganizer()
+
+        organizer.set_apply(lambda t, g, x: (t, x, 1,2,3))
+
+        x,y,z, w = organizer(4)
+
+        assert x==4
+        assert y==1
+        assert z==2
+        assert w==3

@@ -25,6 +25,8 @@ def SGD_apply(
     opt_config: dict,
     hparams: dict,
     value_and_grad_fn: callable,
+    model_tree: dict,
+    model_config: dict,
     *value_grad_args,
     **value_grad_kwargs
     ):
@@ -39,9 +41,9 @@ def SGD_apply(
 
     weight_decay = organizer.weight_decay
 
-    (model, *value), grad = value_and_grad_fn(*value_grad_args, **value_grad_kwargs)
+    (model_tree, *value), grad = value_and_grad_fn(model_tree, model_config, *value_grad_args, **value_grad_kwargs)
 
-    params, rest = organizer.params_filter(model)
+    params, rest = organizer.params_filter(model_tree)
 
     momentum_buffer_next = tree_map(
         lambda m, g, p: m * momentum_coef +  (g + weight_decay * p),

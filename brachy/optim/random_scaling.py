@@ -6,43 +6,64 @@ import jax
 import sys
 from brachy import  rng_util
 
-def randomly_scale(model_state, opt_state, opt_apply, distribution=jax.random.uniform, rng=None):
-    state = {
-        'subopt_state': opt_state,
-        'true_iterate': model_state,
-        'rng': rng
-    }
+def random_scale(optimizer, model_tree, distribution=jax.random.uniform, interpolate=True, params_filter=su.get_params, params_merger=su.merge_trees,rng=None):
+    if rng is None:
+        rng = rng_util.split()
 
-    return state, Partial(randomly_scale_apply, subopt_apply=opt_apply, distribution=distibution)
+    organizer = su.StateOrganizer()
 
-def randomly_scale_apply(
+    organizer.register_buffer('rng', rng)
+    organizer.optimizer = optimizer
+    organizer.register_aux('distribution', distribution)
+    organizer.register_aux('params_filter', params_filter)
+    organizer.register_aux('params_merger',  params_merger)
+
+    params, rest = params_filter(model_tree)
+
+    organizer.register_buffer('true_params',
+        params
+    )
+    
+    organizer.register_aux('interpolate', interpolate)
+
+    return organizer.create_module(random_scale_apply)
+
+def random_scale_apply(
     opt_state,
-    model_state,
+    opt_config,
+    hparams,
     value_and_grad_fn,
-    distribution,
-    subopt_apply,
+    model_tree,
     *args,
-    params_filter=su.get_params,
-    params_merger=su.merge_trees,
     **kwargs):
 
-    prev_true_iterate = opt_state['true_iterate']
+    organizer = su.StateOrganizer(opt_state, opt_config)
 
-    opt_state['subopt_state'], opt_state['true_iterate'], *value = subopt_apply(model_state, *args, **kwargs)
+    true_params = organizer.true_params
 
-    opt_state['rng'], subkey = jax.random.split(opt_state['rng'])
+    base_optimizer = organizer.optimizer
 
-    scale = distribution(subkey)
+    params, rest = organizer.params_filter(model_tree)
 
-    params, rest = params_filter(opt_state['true_iterate'])
-    prev_params = params_filter(prev_true_iterate)
+    (updated_model, *value) = organizer.optimizer(hparams, value_and_grad_fn, model_tree, *args, **kwargs)
 
-    params = tree_map(
-        lambda cur, prev: prev * scale  + cur * (1-scale),
-        params,
-        prev_params
-    )
+    updated_params, updated_rest = organizer.params_filter(updated_model)
 
-    model_state = params_merger(rest, params)
+    offset = tree_map(lambda x, y: x-y, updated_params, params)
 
-    return opt_state, model_state , *value
+    organizer.rng, subkey = jax.random.split(organizer.rng)
+
+    scale = organizer.distribution(subkey)
+
+    if organizer.interpolate:
+        true_scale = 1.0
+    else:
+        true_scale = scale
+
+    organizer.true_params = tree_map(lambda o, t: true_scale * o + t, offset, true_params)
+
+    scaled_params = tree_map(lambda o, t: scale * o + t, offset, true_params)
+
+    updated_model = organizer.params_merger(scaled_params, updated_rest)
+
+    return organizer.get_state(), updated_model , *value

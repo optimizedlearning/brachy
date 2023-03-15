@@ -918,7 +918,14 @@ class StateOrganizer:
     def __call__(self, *args, **kwargs):
         state = self._state
         global_config = self.get_global_config()
-        next_state, output = state['apply'](state, global_config, *args, **kwargs)
+        values = state['apply'](state, global_config, *args, **kwargs)
+        next_state = values[0]
+        if len(values) == 1:
+            output = None
+        if len(values) == 2:
+            output = values[1]
+        else:
+            output = values[1:]
 
         # Tricky: we must change the keys of self._state directly: we cannot simply reassign state
         # as self._state = merge(self._state, next_state, keys_to_override=['params','buffers'])

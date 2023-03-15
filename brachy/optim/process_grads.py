@@ -50,7 +50,7 @@ def clip_apply(
         return out, grad
 
     base_opt = opt_tree['submodules']['optimizer']
-    base_update, *output = su.apply_tree(base_opt, opt_config, hparams, new_value_and_grad_fn, *args, **kwargs)
+    (base_update, *output) = su.apply_tree(base_opt, opt_config, hparams, new_value_and_grad_fn, *args, **kwargs)
 
     update = dict(opt_tree)
     update['submodules']['optimizer'] = base_update
