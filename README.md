@@ -1,18 +1,6 @@
 # Brachy
 ## A (increasingly less) simple neural network library on top of JAX.
 
-BU SCC setup instructions:
-```
-module load python3 pytorch tensorflow cuda/11.2 cudnn/8.1.1 # these versions are specific... do not load the jax module it is woefully out of date right now and will be updated soon hopefully.
-# (set up/activate virtual env e.g. python -m venv gpujaxenv; source gpujaxenv/bin/activate)
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-Note that currently the dependency restricts to jax version 3.25, as later versions seem to have some issue with 
-the convolution operation. I think it is probably due to the cuda or cudnn version, but I can't upgrade those so we downgrade jax.
-Probably you should create a separate environment for GPU vs CPU and run the module load and pip install commands separately on a GPU interactive process. Otherwise
-I'm not sure the GPU parts will install correctly. You can try replacing `requirements.txt` with `requirements_cpu.txt` for a CPU install. I've asked RCS to just provide a recent Jax installation via the module system, so hopefully these issues will go away.
-
 ## Better JIT wrapper
 First, it is very annoying that `jax.jit` cannot handle dictionaries as static arguments, or arguments that are pytree where some values are static and some can be traced, or functions that return static values. So, we provide a general wrapper in `structure_util.improved_static` that takes care of this by automatically separating  out traceable and non-traceable components of arguments before 
 passing to `jit`. It also can handle non-jaxtypes in return values. However, be careful with these: we assume that any non-jaxtype in a return value must be a fixed function of
@@ -151,6 +139,21 @@ The file `rng_util.py` contains a context manager that makes it easier to pass J
 This utility can be combined with the `StateOrganizer` via the decorators `organized_init_with_rng` and `organized_apply` defined in `structure_util.py`. See the language modeling example for these decorators in use.
     
 
+## Installing
+
+### From pip
+You can now also `pip install brachy`! However, this will explicitly NOT install jax as the installation process for jax seems to differ depending on GPU vs CPU. You should install the appropriate jax version
+
+
+### BU SCC setup instructions
+You need python3, and jax (pytorch useful for dataloaders, or running tests). Currently there seems to be some issue preventing simultaneous loading of jax, pytorch and tensorflow. However, we probably don't need tensorflow so it is not a huge problem.
+```
+module load python3 pytorch cuda/11.6 jax/0.4.6
+```
+You should probably also setup a virtual environment: `python -m venv brachyenv` to create, `source brachyenv/bin/activate` to activate,  `deactive` to leave the environment.
+
+Some of the example require additional packages listed in the `requirements.txt` file. You can `pip install --upgrade pip` and then `pip install -r requirements.txt` to get them to run.
+Or just run an example and then do `pip  install` one by one as you get "ModuleNotFoundError
 
 
 

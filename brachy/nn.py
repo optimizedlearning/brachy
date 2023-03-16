@@ -17,7 +17,7 @@ import gc
 
 from types import SimpleNamespace
 
-from jax._src.typing import Array, ArrayLike, DType, DTypeLike
+from jax import Array
 from typing import overload, Any, Callable, Literal, Optional, Sequence, Tuple, Union
 
 import functools

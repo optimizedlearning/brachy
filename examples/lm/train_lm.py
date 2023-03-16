@@ -20,11 +20,6 @@ from brachy import  optim
 from brachy.nn import functional as F
 from brachy.optional_module import optional_module
 
-# import structure_util as su
-# import optim
-# from nn import functional as F
-
-# from optional_module import optional_module
 import c4_loader 
 
 from stacked_attention import StackedAttention
@@ -62,16 +57,13 @@ def main():
     if config.train.mixed_precision:
         model_tree, model_config = optim.mixed_precision_tree((model_tree, model_config), config.train.mixed_precision_scalar)
 
-    # model_state, model_apply = su.bind_module(model_tree, model_config)
+
 
 
     print("Initializing optimizer...")
     optconf = config.train.optimizer
     opt = optim.AdamW(model_tree, lr=1.0, betas=list(optconf.betas), weight_decay=optconf.weight_decay)
-    # if config.train.mixed_precision:
-    #     opt = optim.add_mixed_precision(
-    #         opt,
-    #         config.train.mixed_precision_scalar)
+
 
     opt_tree, opt_config = optim.process_grads.clip_grads(
         opt,
@@ -130,11 +122,6 @@ def train_step(
     hparams  = {'lr': lr}
 
     opt_update, model_update, cross_entropy, outputs = su.apply_tree(opt_tree, opt_config, hparams, loss_and_grad, model_tree, model_config, inputs, targets)
-
-    # opt_state, model_jax_types, cross_entropy, outputs = opt_apply(opt_state, model_tree, (inputs, targets), l_t, lr=lr)
-    # This is a bit annoying... a jitted function cannot return a non-jax type, so we can't return the entire tree...
-    # is there a better way to organize things?
-    # model_tree = su.merge_trees(model_aux_apply, model_jax_types)
 
 
     predictions = jnp.argmax(outputs, axis=-1)

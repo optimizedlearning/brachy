@@ -2,15 +2,15 @@
 import dill
 from jax.tree_util import tree_map, tree_reduce, tree_flatten, tree_unflatten
 from jax import numpy as jnp
-from jax.core import typing
+from jax import Array
 
     
 def save(tree, global_config, fp):
 
     leaves, treedef = tree_flatten(tree)
 
-    array_leaves = [x if isinstance(x, typing.Array) else None for x in leaves]
-    nonarray_leaves = [None if isinstance(x, typing.Array) else x for x in leaves]
+    array_leaves = [x if isinstance(x, Array) else None for x in leaves]
+    nonarray_leaves = [None if isinstance(x, Array) else x for x in leaves]
 
     dill.dump(['haxcheckpointversion', 1], fp)
     dill.dump(global_config, fp)

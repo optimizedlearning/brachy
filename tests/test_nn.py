@@ -251,7 +251,7 @@ def get_nested_state(t_module):
 
 
 
-def test_initialization(rng, module_gen, t_module_gen, get_t_state, sample_num=1000):
+def check_initialization(rng, module_gen, t_module_gen, get_t_state, sample_num=1000):
     mean = None
     var = None
 
@@ -393,7 +393,7 @@ class TestNN(unittest.TestCase):
 
         module_gen = lambda r: nn.Linear(300, 4000, bias=True, rng=r)
         t_module_gen = lambda : torch.nn.Linear(300, 4000, bias=True)
-        test_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
+        check_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
 
 
 
@@ -429,7 +429,7 @@ class TestNN(unittest.TestCase):
 
         module_gen = lambda r: nn.Embedding(500, 1000, rng=r)
         t_module_gen = lambda : torch.nn.Embedding(500, 1000)
-        test_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
+        check_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
 
         tree, global_config = nn.Embedding(30, 10, rng=rng)
         t_module = torch.nn.Embedding(30, 10)
@@ -495,7 +495,7 @@ class TestNN(unittest.TestCase):
                 torch.nn.Linear(500, 50)
             ])
 
-        test_initialization(rng, module_gen, t_module_gen, get_t_state_for_init_test, 500)
+        check_initialization(rng, module_gen, t_module_gen, get_t_state_for_init_test, 500)
 
         with rng_util.RNGState(rng):
             chain = [
@@ -546,7 +546,7 @@ class TestNN(unittest.TestCase):
         module_gen = lambda r: nn.LayerNorm(300, rng=r)
         t_module_gen = lambda : torch.nn.LayerNorm(300)
 
-        test_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
+        check_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
 
         tree, global_config = nn.LayerNorm(3, rng=rng)
         t_module = torch.nn.LayerNorm(3)
@@ -588,7 +588,7 @@ class TestNN(unittest.TestCase):
 
         module_gen = lambda r: nn.Conv2d(30, 100, 50, padding='same', bias=True, rng=r)
         t_module_gen = lambda: torch.nn.Conv2d(30, 100, 50, padding='same', bias=True)
-        test_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
+        check_initialization(rng, module_gen, t_module_gen, get_t_state, 100)
 
 
         tree, global_config = nn.Conv2d(3, 4, 5, padding='same', bias=True, rng=rng)

@@ -6,7 +6,7 @@ from jax import lax
 from . import structure_util as su
 import numpy as np
 
-from jax._src.typing import Array, ArrayLike, DType, DTypeLike
+from jax import Array
 from typing import overload, Any, Callable, Literal, Optional, Sequence, Tuple, Union
 
 
