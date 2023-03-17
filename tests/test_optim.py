@@ -20,6 +20,12 @@ from brachy.optim import mixed_precision_tree, mixed_precision_loss
 
 from brachy.optim.process_grads import clip_grads
 from brachy.optim.random_scaling import random_scale
+from brachy import optim
+
+try:
+    import optax
+except:
+    optax = None
 
 
 
@@ -71,6 +77,40 @@ def simple_ff_apply(organizer, x):
     return jnp.sum(x)
 
 
+
+
+def check_optimizes(opt_init):
+
+        rng = jax.random.PRNGKey(0)
+
+        tree, global_config = simple_ff(rng=rng)
+
+        # state, apply = su.bind_module(tree, global_config)
+        # tree = su.fill_tree_from_torch_module(tree, t_module)
+
+        opt_tree, opt_config = opt_init(tree)
+
+        def loss(tree, config, x):
+            s, y = su.apply_tree(tree, config, x)
+            return s, jnp.abs(y)
+
+        def train_step(opt_tree, opt_config, tree, global_config, x):
+            value_grad_fn = su.tree_value_and_grad(loss)
+            # (state, value), grad = value_grad_fn(state, x)
+            # l_t = lambda state: value_grad_fn(state, x)
+            return su.apply_tree(opt_tree, opt_config, {}, value_grad_fn, tree, global_config, x)
+    
+        train_step = su.jit(train_step, static_argnums=(1,3))
+
+        for i in range(100):
+
+            x = jnp.ones(shape=(4,3,5,4))
+            x_t = torch.tensor(np.array(x))
+            
+            opt_tree, tree, logs, value = train_step(opt_tree, opt_config, tree, global_config, x)
+
+
+        assert jnp.allclose(value, 0.0, atol=1e-1), f"loss value not small after 100 iterations: value: {value}"
 
 
 
@@ -262,10 +302,6 @@ class TestSGD(unittest.TestCase):
                 assert jnp.allclose(value, mixed_value, rtol=1e-1), f"values not close on iteration {i}: float32 value: {value}, float16 value: {mixed_value}"
 
         assert jnp.allclose(0, mixed_value, atol=1e-4), f"mixed_precision did not optimize! loss was {mixed_value}"
-
-
-
-
 
 
 
@@ -505,3 +541,12 @@ class TestSGD(unittest.TestCase):
         new_x = tree['params']['x']
 
         assert jnp.allclose(new_x, jnp.array([676.0, 121.0])), f"x was unexpected value: {new_x}"
+
+
+    def test_optax(self):
+        if optax is None:
+            return
+
+        optax_wrap  = lambda *a, **kw: optim.optax.init(optax.adam(learning_rate=1e-4), *a, **kw)
+
+        check_optimizes(optax_wrap)
