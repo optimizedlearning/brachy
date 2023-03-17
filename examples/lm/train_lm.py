@@ -191,21 +191,9 @@ def train_loop(
 
         tokens = jnp.sum(targets != -100)
 
-        # old_opt_state = opt_state
-        # old_model_state = model_state
+
         opt_tree, model_tree, log_data = train_step_jit(opt_tree, opt_config, model_tree, model_config, inputs, targets, token_count, lr_scheduler)
         
-
-        # this step feels hacky... ideally train_step would just return the entire updated tree, but 
-        # unfortunately structure trees are not jax types because they hold things like functions and strings
-        # and so cannot be jitted.
-        # maybe there is a better way to phrase things though? The below seems especially dangerous
-        # because the order of the arguments is important and also non-obvious. Maybe the function should be named
-        # in a way that makes it clear what to do...
-        # options include designing a clearer api for doing the following merge, or coming up with a way
-        # to allow returning entire structure trees that doesn't feel too dangerous. For example, if we assume all non jax-type
-        # return values are invariant to the jax-type arguments, then it could probably be done...
-        # opt_tree = su.merge_trees(opt_tree, opt_update)
     
 
         # if is_number(log_data['loss']):
