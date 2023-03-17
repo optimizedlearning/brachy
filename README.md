@@ -100,37 +100,36 @@ behaviors in the train or eval setting require more delicate construction:
 ```
 def dropout_apply(S: Hax.structure_tree, global_config: dict, x: Array) -> Array, Hax.structure_tree:
     if not global_config["is_training"]:
-        return x, S
+        return S, x
 
-    rng = S["constants"]["rng"]
+    rng = S["buffers"]["rng"]
     rng, subkey = jax.random.split(rng)
 
-    p = S["constants"]["p"]
-    y = x * jax.random.bernoulli(rng, p, shape=x.shape)
+    p = S["buffers"]["p"]
+    y = x * jax.random.bernoulli(subkey, p, shape=x.shape)/p
 
-    S["constants"]["rng"] = rng
+    S["buffers"]["rng"] = rng
 
     return S, y
 ```
 Note that it is strongly advised NOT to change the `"apply"` or `"aux"` values of the input `S` inside these apply functions as this will cause
-very weird behavior when jitting. Instead, these values are meant to be edited as part of an overall surgery on the model architecture. Several helper
-functions provided by Hax (e.g. `bind_module`) explicitly enforce this behavior if they are used. In fact, the return value from
-an  apply function need not even have the  keys `"apply"` and `"aux"`.
+retracing when jitting. Instead, these values are meant to be edited as part of an overall surgery on the model architecture.
 
 ## Structure Tree Terminology
 
-Technically, many (possible most) of the functions in this package to not require a structure tree to have all the keys `"params"`, `"buffers"`, `"aux"`, `"apply"`: only the `"submodules"` key is really needed. Given a structure tree `tree`, we say that `tree` is a leaf if `tree["submodules"] = {}`. Further, we say that `tree` is a node with path `[k1, k2, k3]` if there is a root tree `root` such that `tree = root["submodules"][k1]["submodules"][k2]["submodules"][k3]`. In general, the path of `tree["submodules"][k]` is `P + [k]` where `P` is the path of `tree`.
+Technically, many of the functions in this package do not require a structure tree to have all the keys `"params"`, `"buffers"`, `"aux"`, `"apply"`: only the `"submodules"` key is really needed. Given a structure tree `tree`, we say that `tree` is a leaf if `tree["submodules"] = {}`. Further, we say that `tree` is a node with path `[k1, k2, k3]` if there is a root tree `root` such that `tree = root["submodules"][k1]["submodules"][k2]["submodules"][k3]`. In general, the path of `tree["submodules"][k]` is `P + [k]` where `P` is the path of `tree`.
 
 ## Structure Tree Utils
 
-The file `structure_tree_util.py` contains the core functions that power converting structure trees into the forward pass function for a module and back.
+`brachy.structure_tree_util` contains the core functions that power converting structure trees into the forward pass function for a module and back.
 Key utilities include:
 
 * `structure_tree_map(func: Callable, *trees: List[dict], path={}) -> Union[dict, Tuple[dict,...]]`. The first argument is a function `func(*nodes, path)` that outputs a leaf node (or a tuple of leaf nodes).The second argument `trees` must be either a single structure tree or a list of structure trees. The output will be a structure tree such that for each unique path `P` in any of the trees in `trees`, the output tree will have a node with path `P` that is the output of `func` with first argument `nodes` being the list `[subtree of tree at path P for tree in trees]` and `path=P`. If `func` returns multiple trees, then `structure_tree_map` will output the corresponding multiple trees.
-* `bind_module(tree: dict, global_config: dict) -> dict, Callable`. This function takes as input a structure tree and a global config and returns a `state` dictionary and an `apply` function. The state dictionary is just the original structure tree with all but the `"params"`, `"buffers"`, and `"submodules"` keys removed. This represents the current mutable state of the module. The apply function will apply the tree: it takes a state dictionary and whatever inputs the module requires and returns both an updated state dictionary and all the ouptuts of the module.
-The returned `apply` function from `bind_module` can be Jitted as it captures the unhashable `global_config` dictionary in a closure. To change the global config dictionary, use `apply.bind_global_config(new_global_config)`. To recover a full structure tree, use `tree, global_config = unbind_module(state, apply)`.
 * `StateOrganizer`: this class does a lot of the heavy lifting to make defining new structure trees similar to the experience of defining a module in pytorch. Eventually, one can call `organizer.create_module()` to obtain a tuple `tree, global_config`. When building the tree, if you assign a new attribute to a `StateOrganizer` object with a tuple via `'organizer.name = (subtree, sub_global_config)`, then the tree returned by `organizer.create_module()` will have `subtree` as the value `["submodules"][name]`. Also, `global_config` will be merged with `sub_global_config` (value in `sub_global_config` do not override old values).
 See the examples directory to see how to use `StateOrganizer` objects.
+* `apply_tree(tree: dict, global_config: dict, *args, **kwargs)`. This function is a shorthand for `tree['apply'](tree, global_config, *args, **kwargs)`.
+* `bind_module(tree: dict, global_config: dict) -> dict, Callable`. This function is mostly unecessary given the updated `brachy.structure_util.jit` functionality described earlier. It takes as input a structure tree and a global config and returns a `state` dictionary and an `apply` function. The state dictionary is just the original structure tree with all but the `"params"`, `"buffers"`, and `"submodules"` keys removed. This represents the current mutable state of the module. The apply function will apply the tree: it takes a state dictionary and whatever inputs the module requires and returns both an updated state dictionary and all the ouptuts of the module.
+The returned `apply` function from `bind_module` can be Jitted as it captures the unhashable `global_config` dictionary in a closure. To change the global config dictionary, use `apply.bind_global_config(new_global_config)`. To recover a full structure tree, use `tree, global_config = unbind_module(state, apply)`.
 
 ## Random number generator utils
 
@@ -142,7 +141,7 @@ This utility can be combined with the `StateOrganizer` via the decorators `organ
 ## Installing
 
 ### From pip
-You can now also `pip install brachy`! However, this will explicitly NOT install jax as the installation process for jax seems to differ depending on GPU vs CPU. You should install the appropriate jax version
+You can now `pip install brachy`! However, this will explicitly NOT install jax as the installation process for jax seems to differ depending on GPU vs CPU. You should install the appropriate jax version
 
 
 ### BU SCC setup instructions

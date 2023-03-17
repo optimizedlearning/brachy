@@ -121,7 +121,7 @@ def train_step(opt_tree, opt_config, model_tree, model_config, inputs, targets, 
         'lr': lr
     }
 
-    opt_tree, model_tree, output, cross_entropy = su.apply_tree(
+    opt_tree, model_tree, opt_logs, output, cross_entropy = su.apply_tree(
         opt_tree,
         opt_config,
         hparams,
@@ -135,9 +135,9 @@ def train_step(opt_tree, opt_config, model_tree, model_config, inputs, targets, 
     correct = jnp.sum(predictions == targets)
 
     log_data = {
-        'lr': lr,
         'correct': correct,
         'loss': cross_entropy,
+        'optimizer': opt_logs,
     }
 
     return opt_tree, model_tree, log_data
@@ -182,13 +182,14 @@ def train_epoch(epoch, opt_tree, opt_config, model_tree, model_config, trainload
 
         pbar.set_description('Batch: %d/%d, Loss: %.3f | Acc: %.3f%% (%d/%d)'
                      % (batch_idx, len(trainloader), total_loss/(batch_idx+1), 100.*correct/total, correct, total))
-
-    wandb.log({
+    log_data.update({
         'train/accuracy': correct/total,
         'epoch': epoch,
         'train/loss': total_loss/batches,
-        'train/lr': log_data['lr'],
     })
+
+    
+    wandb.log(log_data)
 
     return opt_tree, model_tree
 

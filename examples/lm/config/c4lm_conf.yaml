@@ -1,15 +1,15 @@
 model:
   num_layers: 12
-  embed_dim: 768
-  num_heads: 12
+  embed_dim: 1024
+  num_heads: 8
   max_input_length: 30
 
 train:
-  batch_size: 128
+  batch_size: 256
   num_workers: 4
 
   mixed_precision: True
-  mixed_precision_scalar: 128
+  mixed_precision_scalar: 128.0
 
   log_freq_seconds: 10
 

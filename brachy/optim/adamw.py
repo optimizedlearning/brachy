@@ -95,7 +95,12 @@ def AdamW_apply(
 
     updated_model = organizer.params_merger(rest, params)
 
-    return organizer.get_state(), updated_model, *value
+
+    log_data = {
+        'lr': lr
+    }
+
+    return organizer.get_state(), updated_model, log_data, *value
 
 
 

@@ -112,7 +112,7 @@ class TestSGD(unittest.TestCase):
 
             x = jnp.ones(shape=(4)) * jnp.sqrt(i+1)
             x_t = torch.tensor(np.array(x))
-            opt_tree, model_tree, value = train_step(opt_tree, opt_config, model_tree, model_config, x)
+            opt_tree, model_tree, logs, value = train_step(opt_tree, opt_config, model_tree, model_config, x)
             # tree = su.merge_trees(tree, tree_update)
 
             sgd_t.zero_grad()
@@ -157,7 +157,7 @@ class TestSGD(unittest.TestCase):
             x = jnp.ones(shape=(4,3,5,4)) * jnp.sqrt(i+1)
             x_t = torch.tensor(np.array(x))
             
-            opt_tree, tree, value = train_step(opt_tree, opt_config, tree, global_config, x)
+            opt_tree, tree, logs, value = train_step(opt_tree, opt_config, tree, global_config, x)
 
             sgd_t.zero_grad()
             value_t = t_module(x_t)
@@ -198,7 +198,7 @@ class TestSGD(unittest.TestCase):
             x = jnp.ones(shape=(4,3,5,4)) * jnp.sqrt(i+1)
             x_t = torch.tensor(np.array(x))
             
-            opt_tree, tree, value = train_step(opt_tree, opt_config, tree, global_config, x)
+            opt_tree, tree, logs, value = train_step(opt_tree, opt_config, tree, global_config, x)
             # tree = su.merge_trees(tree, update)
 
             opt_t.zero_grad()
@@ -251,11 +251,11 @@ class TestSGD(unittest.TestCase):
             x = jnp.ones(shape=(4,3,5,4)) * jnp.sqrt(i+1)
             x_t = torch.tensor(np.array(x))
             
-            opt_tree, tree, value = train_step(opt_tree, opt_config, tree, global_config, x)
+            opt_tree, tree, logs, value = train_step(opt_tree, opt_config, tree, global_config, x)
             # tree = su.merge_trees(tree, tree_update)
 
 
-            mixed_opt_tree, mixed_tree, mixed_value = mixed_train_step(mixed_opt_tree, mixed_opt_config, mixed_tree, global_config, x)
+            mixed_opt_tree, mixed_tree, logs, mixed_value = mixed_train_step(mixed_opt_tree, mixed_opt_config, mixed_tree, global_config, x)
             # mixed_tree = su.merge_trees(mixed_tree, mixed_tree_update)
 
             if i <= 5:
@@ -298,7 +298,7 @@ class TestSGD(unittest.TestCase):
             x = jnp.ones(shape=(4,3,5,4)) * jnp.sqrt(i+1)
             x_t = torch.tensor(np.array(x))
             
-            opt_tree, tree, value = train_step(opt_tree, opt_config,  tree, global_config, x)
+            opt_tree, tree, logs, value = train_step(opt_tree, opt_config,  tree, global_config, x)
             # tree = su.merge_trees(tree, tree_update)
 
         assert jnp.allclose(0, value, atol=1e-4), f"clip grads did not optimize! loss was {value}"
@@ -341,7 +341,7 @@ class TestSGD(unittest.TestCase):
 
         train_step = su.jit(train_step, static_argnums=(1,3))
 
-        opt_tree, tree, value = train_step(opt_tree, opt_config, tree, global_config, w)
+        opt_tree, tree, logs, value = train_step(opt_tree, opt_config, tree, global_config, w)
 
         new_x = tree['params']['x']
 
@@ -386,13 +386,13 @@ class TestSGD(unittest.TestCase):
 
         train_step = su.jit(train_step, static_argnums=(1,3))
 
-        opt_tree, tree, value = train_step(opt_tree, opt_config, tree, global_config, w)
+        opt_tree, tree, logs, value = train_step(opt_tree, opt_config, tree, global_config, w)
 
         new_x = tree['params']['x']
 
         assert jnp.allclose(new_x, jnp.array([-26.0, -11.0])), f"x was unexpected value: {new_x}"
 
-        opt_tree, tree, value = train_step(opt_tree, opt_config, tree, global_config, w)
+        opt_tree, tree, logs, value = train_step(opt_tree, opt_config, tree, global_config, w)
 
         new_x = tree['params']['x']
 
@@ -436,7 +436,7 @@ class TestSGD(unittest.TestCase):
 
         train_step = su.jit(train_step, static_argnums=(1,3))
 
-        opt_tree, tree, value = train_step(opt_tree, opt_config, tree, global_config)
+        opt_tree, tree, logs, value = train_step(opt_tree, opt_config, tree, global_config)
 
         new_x = tree['params']['x']
 
@@ -445,7 +445,7 @@ class TestSGD(unittest.TestCase):
         true_params = opt_tree['buffers']['true_params']['params']['x']
         assert jnp.allclose(true_params, jnp.array([0.0])), f"x was unexpected value: {true_params}"
 
-        opt_tree, tree, value = train_step(opt_tree, opt_config, tree, global_config)
+        opt_tree, tree, logs, value = train_step(opt_tree, opt_config, tree, global_config)
 
         offset2 = tree['params']['x'] - new_x
 
@@ -494,13 +494,13 @@ class TestSGD(unittest.TestCase):
 
         train_step = su.jit(train_step, static_argnums=(1,3))
 
-        opt_tree, tree, value = train_step(opt_tree, opt_config, tree, global_config, w)
+        opt_tree, tree, logs, value = train_step(opt_tree, opt_config, tree, global_config, w)
 
         new_x = tree['params']['x']
 
         assert jnp.allclose(new_x, jnp.array([-26.0, -11.0])), f"x was unexpected value: {new_x}"
 
-        opt_tree, tree, value = train_step(opt_tree, opt_config, tree, global_config, w)
+        opt_tree, tree, logs, value = train_step(opt_tree, opt_config, tree, global_config, w)
 
         new_x = tree['params']['x']
 

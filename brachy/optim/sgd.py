@@ -57,9 +57,13 @@ def SGD_apply(
         params, momentum_buffer_next
     )
 
+    log_data = {
+        'lr': lr
+    }
+
     updated_model = organizer.params_merger(rest, params)
 
-    return organizer.get_state(), updated_model, *value
+    return organizer.get_state(), updated_model, log_data, *value
 
 
 

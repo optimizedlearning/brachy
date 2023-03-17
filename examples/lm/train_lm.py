@@ -121,17 +121,19 @@ def train_step(
 
     hparams  = {'lr': lr}
 
-    opt_update, model_update, cross_entropy, outputs = su.apply_tree(opt_tree, opt_config, hparams, loss_and_grad, model_tree, model_config, inputs, targets)
+    opt_update, model_update, opt_logs, cross_entropy, outputs = su.apply_tree(opt_tree, opt_config, hparams, loss_and_grad, model_tree, model_config, inputs, targets)
 
 
     predictions = jnp.argmax(outputs, axis=-1)
 
     correct = jnp.sum(predictions == targets)
 
+    # WARNING: when jitting, we will only capture the numerical data in log_data:
+    # if you put strings here they need to be constants.
     log_data = {
         'loss': cross_entropy,
         'correct': correct,
-        'lr_schedule': lr
+        'optimizer': opt_logs
     }
 
     return opt_update, model_update, log_data
