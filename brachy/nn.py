@@ -475,7 +475,7 @@ def MultiheadAttention_apply(tree, global_config, q, k, v, mask=None):
         # TODO: add breaking test for numerical precision improvement when
         # masking this way as opposed to using the `where` keyword in softmax.
         big_neg = jnp.finfo(logits.dtype).min
-        logits = jnp.where(mask, logits, big_neg)
+        logits = jnp.where(broadcast_mask, logits, big_neg)
 
     att = jax.nn.softmax(logits, axis=-1) # [B, N, T, T] -> [B, N, T, T]
 
