@@ -832,7 +832,7 @@ class TestNN(unittest.TestCase):
         state, y = apply(state, x)
         state, y_zeroed = apply(state, x_zeroed)    
 
-        assert jnp.allclose(y[:,:3,:], y_zeroed[:, :3,:])   
+        assert jnp.allclose(y[:,:3,:], y_zeroed[:, :3,:]), f"failed allclose: {y[:,:3,:]} vs {y_zeroed[:, :3,:]}"  
 
         assert not jnp.allclose(y[1,4,2], y_zeroed[1, 4,2])    
 

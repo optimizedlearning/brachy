@@ -66,8 +66,9 @@ def softmax(x: Array,
       Either an integer or a tuple of integers.
     where: Elements to include in the :code:`softmax`.
   """
-  x_max = jnp.max(x, axis, where=where, initial=-jnp.inf, keepdims=True)
-  unnormalized = jnp.exp(x - lax.stop_gradient(x_max))
+  big_neg = jnp.finfo(x.dtype).min
+  x_max = jnp.max(x, axis, where=where, initial=big_neg, keepdims=True)
+  unnormalized = jnp.exp(x - jax.lax.stop_gradient(x_max))
   if where is not None:
     unnormalized = jnp.where(where, unnormalized, 0.0)
   return unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)

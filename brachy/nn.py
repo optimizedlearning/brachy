@@ -469,13 +469,15 @@ def MultiheadAttention_apply(tree, global_config, q, k, v, mask=None):
     logits = logits / jnp.sqrt(H)
 
 
-
     if mask is not  None:
         broadcast_mask = jnp.broadcast_to(mask[:, :, :T, :T], logits.shape)
 
-        att = functional.softmax(logits, axis=-1, where=broadcast_mask) # [B, N, T, T] -> [B, N, T, T]
-    else:
-        att = jax.nn.softmax(logits, axis=-1)
+        # TODO: add breaking test for numerical precision improvement when
+        # masking this way as opposed to using the `where` keyword in softmax.
+        big_neg = jnp.finfo(logits.dtype).min
+        logits = jnp.where(mask, logits, big_neg)
+
+    att = jax.nn.softmax(logits, axis=-1) # [B, N, T, T] -> [B, N, T, T]
 
     values = einops.einsum(att, v, 'b n t1 t2, b n t2 h -> b n t1 h') # [B, N, T, T] x [B, N, T, H] -> [B, N, T, H]
     values = einops.rearrange(values, 'b n t h -> b t (n h)') # [B N T H] -> [B T C]
