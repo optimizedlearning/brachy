@@ -20,7 +20,10 @@
 # assuming we are in runs/ here:
 
 cd /projectnb/aclab/cutkosky/hax
-module load python3 pytorch tensorflow cuda/11.2 cudnn/8.1.1
-source /projectnb/aclab/cutkosky/gpujaxenv/bin/activate
+module load python3 pytorch cuda/11.6 jax
+TEMPFILE=`mktemp -d`
+python -m venv $TEMPFILE
+source $TEMPFILE/bin/activate
+pip install --upgrade pip
 pip install -r requirements.txt
-python examples/resnet/train_resnet.py --wandb
+python examples/resnet/train_resnet.py $@
