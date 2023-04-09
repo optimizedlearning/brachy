@@ -1,6 +1,6 @@
 
 from jax.tree_util import tree_flatten, tree_map, tree_reduce
-from . import structure_util_core as su
+from brachy import structure_util as su
 import jax
 import inspect
 from functools import wraps
@@ -308,5 +308,3 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
 
     return static_wrapper
 
-
-jit = improved_static(jax.jit)

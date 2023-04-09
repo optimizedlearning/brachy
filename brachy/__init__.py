@@ -6,4 +6,5 @@ from . import (
     functional,
     optional_module,
     rng_util,
-    optim)
+    optim,
+    jit_util)

@@ -18,7 +18,7 @@ def increment_jit_depth():
     JIT_DEPTH = JIT_DEPTH + 1
 
 
-def decement_jit_depth():
+def decrement_jit_depth():
     global JIT_DEPTH
     assert JIT_DEPTH>0, "attempted to decrement JIT_DEPTH to a negative value!"
 
@@ -45,7 +45,7 @@ def flush_calls():
 def sidecall(func, *args, **kwargs):
     global FUNCTION_BUFFER, ARGS_BUFFER, KWARGS_BUFFER
 
-    FUNCTION_BUFFER.append(func)
+    FUNCTION_BUFFER.append(jax.tree_util.Partial(func))
     ARGS_BUFFER.append(args)
     KWARGS_BUFFER.append(kwargs)
 
@@ -53,34 +53,47 @@ def sidecall(func, *args, **kwargs):
 
 
 def sidecall_wrapper(wrapper):
-    global ARGS_BUFFER, KWARGS_BUFFER
 
     @functools.wraps(wrapper)
     def wrapped_wrapper(func, *wrap_args, **wrap_kwargs):
 
         @functools.wraps(func)
-        def plumbed_func(*args, **kwargs):
-
+        def func_returning_side_args(*args, **kwargs):
+            global FUNCTION_BUFFER, ARGS_BUFFER, KWARGS_BUFFER
             output = func(*args, **kwargs)
 
-            return output, ARGS_BUFFER, KWARGS_BUFFER
+            if not isinstance(output, tuple):
+                output = [output]
+            output = list(output)
 
-        wrapped_plumbed_func = wrapper(plumbed_func, *wrap_args, **wrap_kwargs)
+            return tuple(output + [FUNCTION_BUFFER, ARGS_BUFFER, KWARGS_BUFFER])
+
+        wrapped_func_returning_side_args = wrapper(func_returning_side_args, *wrap_args, **wrap_kwargs)
 
         @functools.wraps(func)
         def wrapped_func(*args, **kwargs):
 
+            flush_calls()
+
             increment_jit_depth()
 
-            output, args_buffer, kwargs_buffer = wrapped_plumbed_func(*args, **wrap_kwargs)
-            ARGS_BUFFER = args_buffer
-            KWARGS_BUFFER = kwargs_buffer
+            values = wrapped_func_returning_side_args(*args, **kwargs)
+            output = values[:-3]
+            function_buffer, args_buffer, kwargs_buffer = tuple(values[-3:])
 
             decrement_jit_depth()
 
-            flush_calls()
+            if not is_in_jit():
+                global FUNCTION_BUFFER, ARGS_BUFFER, KWARGS_BUFFER
+                ARGS_BUFFER = args_buffer
+                KWARGS_BUFFER = kwargs_buffer
+                FUNCTION_BUFFER = function_buffer
 
-            return output
+            flush_calls()
+            if len(output) == 1:
+                return output[0]
+            else:
+                return tuple(output)
 
         return wrapped_func
 

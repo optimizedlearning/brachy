@@ -21,6 +21,7 @@ from brachy.optim import mixed_precision_tree, mixed_precision_loss
 from brachy.optim.process_grads import clip_grads
 from brachy.optim.random_scaling import random_scale
 from brachy import optim
+from brachy import jit_util
 
 try:
     import optax
@@ -100,7 +101,7 @@ def check_optimizes(opt_init):
             # l_t = lambda state: value_grad_fn(state, x)
             return su.apply_tree(opt_tree, opt_config, {}, value_grad_fn, tree, global_config, x)
     
-        train_step = su.jit(train_step, static_argnums=(1,3))
+        train_step = jit_util.jit(train_step, static_argnums=(1,3))
 
         for i in range(100):
 
@@ -142,8 +143,7 @@ class TestSGD(unittest.TestCase):
             # l_t = lambda state: value_grad_fn(state, x)
             hparams = {'lr': 0.001}
             return su.apply_tree(opt_tree, opt_config, hparams, value_grad_fn, model_tree, model_config, x)
-        jit = su.improved_static(jax.jit)
-        train_step = jit(train_step, static_argnums=(1,3))
+        train_step = jit_util.jit(train_step, static_argnums=(1,3))
 
 
         sgd_t = torch.optim.SGD(t_module.parameters(), lr=0.001, momentum=0.9, weight_decay=0.1)
@@ -187,7 +187,7 @@ class TestSGD(unittest.TestCase):
             # l_t = lambda state: value_grad_fn(state, x)
             return su.apply_tree(opt_tree, opt_config, {}, value_grad_fn, tree, global_config, x)
     
-        train_step = su.jit(train_step, static_argnums=(1,3))
+        train_step = jit_util.jit(train_step, static_argnums=(1,3))
 
 
         sgd_t = torch.optim.SGD(t_module.parameters(), lr=0.001, momentum=0.9, weight_decay=0.1)
@@ -228,7 +228,7 @@ class TestSGD(unittest.TestCase):
             value_grad_fn = su.tree_value_and_grad(model_tree['apply'])
             return su.apply_tree(opt_tree, opt_config, {}, value_grad_fn, model_tree, global_config, x)
 
-        train_step = su.jit(train_step, static_argnums=(1,3))
+        train_step = jit_util.jit(train_step, static_argnums=(1,3))
 
 
         opt_t = torch.optim.AdamW(t_module.parameters(), lr=0.001)
@@ -282,8 +282,8 @@ class TestSGD(unittest.TestCase):
         def mixed_train_step(opt_tree, opt_config, tree, global_config, x):
             return su.apply_tree(opt_tree, opt_config, {}, mixed_value_grad_fn, tree, global_config, x)
     
-        train_step = su.jit(train_step, static_argnums=(1,3))
-        mixed_train_step = su.jit(mixed_train_step, static_argnums=(1,3))
+        train_step = jit_util.jit(train_step, static_argnums=(1,3))
+        mixed_train_step = jit_util.jit(mixed_train_step, static_argnums=(1,3))
 
 
         for i in range(100):
@@ -326,7 +326,7 @@ class TestSGD(unittest.TestCase):
         def train_step(opt_tree, opt_config, tree, global_config, x):
             return su.apply_tree(opt_tree, opt_config, {}, value_grad_fn, tree, global_config, x)
     
-        train_step = su.jit(train_step, static_argnums=(1,3))
+        train_step = jit_util.jit(train_step, static_argnums=(1,3))
 
 
         for i in range(100):
@@ -375,7 +375,7 @@ class TestSGD(unittest.TestCase):
         def train_step(opt_tree, opt_config, tree, global_config, w):
             return su.apply_tree(opt_tree, opt_config, {}, value_grad_fn, tree, global_config, w)
 
-        train_step = su.jit(train_step, static_argnums=(1,3))
+        train_step = jit_util.jit(train_step, static_argnums=(1,3))
 
         opt_tree, tree, logs, value = train_step(opt_tree, opt_config, tree, global_config, w)
 
@@ -420,7 +420,7 @@ class TestSGD(unittest.TestCase):
         def train_step(opt_tree, opt_config, tree, global_config, w):
             return su.apply_tree(opt_tree, opt_config, {}, value_grad_fn, tree, global_config, w)
 
-        train_step = su.jit(train_step, static_argnums=(1,3))
+        train_step = jit_util.jit(train_step, static_argnums=(1,3))
 
         opt_tree, tree, logs, value = train_step(opt_tree, opt_config, tree, global_config, w)
 
@@ -470,7 +470,7 @@ class TestSGD(unittest.TestCase):
         def train_step(opt_tree, opt_config, tree, global_config):
             return su.apply_tree(opt_tree, opt_config, {}, value_grad_fn, tree, global_config)
 
-        train_step = su.jit(train_step, static_argnums=(1,3))
+        train_step = jit_util.jit(train_step, static_argnums=(1,3))
 
         opt_tree, tree, logs, value = train_step(opt_tree, opt_config, tree, global_config)
 
@@ -528,7 +528,7 @@ class TestSGD(unittest.TestCase):
         def train_step(opt_tree, opt_config, tree, global_config, w):
             return su.apply_tree(opt_tree, opt_config, {}, value_grad_fn, tree, global_config, w)
 
-        train_step = su.jit(train_step, static_argnums=(1,3))
+        train_step = jit_util.jit(train_step, static_argnums=(1,3))
 
         opt_tree, tree, logs, value = train_step(opt_tree, opt_config, tree, global_config, w)
 
