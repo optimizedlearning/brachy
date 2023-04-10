@@ -55,12 +55,57 @@ class HashableTree:
 
 
 # These are a bit hacky...
-def split_jax_nonjax(tree):
+def _split_jax_nonjax(tree):
     keep_static = lambda x: not valid_jaxtype(x) and isinstance(x, Hashable)
     jaxtype_tree = tree_map(lambda x: None if keep_static(x) else x, tree)
     nonjaxtype_tree = tree_map(lambda x: x if keep_static(x) else None, tree)
 
     return jaxtype_tree, nonjaxtype_tree
+
+def split_jax_nonjax(tree, auto_detect_structure_trees=True):
+    keep_static = lambda x: not valid_jaxtype(x) and isinstance(x, Hashable)
+    def get_static(x):
+        # if it's a structure tree, we split out the static parts.
+        if su.is_structure_tree(x) and auto_detect_structure_trees:
+            def filter_statics(node, path=None):
+                node = dict(node)
+                node[su.CHILD_KEY] = {}
+                for k in node:
+                    if k not in su.STATIC_KEYS:
+                        node[k] = tree_map(lambda x: None, node[k])
+                return node
+            return su.structure_tree_map(filter_statics, x)
+
+        
+        if keep_static(x):
+            return x
+
+        return None
+    
+    def get_non_static(x):
+        # if it's a structure tree, we split out the static parts.
+        if su.is_structure_tree(x) and auto_detect_structure_trees:
+            def filter_non_statics(node, path=None):
+                node = dict(node)
+                node[su.CHILD_KEY] = {}
+                for k in node:
+                    if k in su.STATIC_KEYS:
+                        node[k] = tree_map(lambda x: None, node[k])
+                return node
+            return su.structure_tree_map(filter_non_statics, x)
+        
+        if keep_static(x):
+            return None
+        return x
+    
+    if auto_detect_structure_trees:
+        is_leaf = su.is_structure_tree
+    else:
+        is_leaf = None
+    jaxtype_tree = tree_map(get_non_static, tree, is_leaf=su.is_structure_tree)
+    nonjaxtype_tree = tree_map(get_static, tree, is_leaf=su.is_structure_tree)
+
+    return jaxtype_tree, nonjaxtype_tree    
 
 def merge_jax_nonjax(jax_tree, nonjax_tree):
     def merge(jt, njt):
@@ -72,7 +117,7 @@ def merge_jax_nonjax(jax_tree, nonjax_tree):
     return tree_map(merge, jax_tree, nonjax_tree, is_leaf=lambda x: x is None)
 
 
-def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=None, **outer_kwargs):
+def improved_static(wrapper, auto_detect_structure_trees=True):
 
     wrapper_signature = inspect.signature(wrapper)
     wrapper_parameters = wrapper_signature.parameters
@@ -155,25 +200,15 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
             tree_args_statics = {}
             tree_kwargs_statics = {}
             for argnum, arg in enumerate(args):
-                if not su.is_structure_tree(arg):
-                    jax_tree, nonjax_tree = split_jax_nonjax(arg)
-                    split_args.append(jax_tree)
-                    tree_args_statics[argnum] = nonjax_tree
-                else:
-                    params_buffers, rest = su.split_non_static(arg)
-                    split_args.append(params_buffers)
-                    structure_tree_args_statics[argnum] = rest        
+                jax_tree, nonjax_tree = split_jax_nonjax(arg, auto_detect_structure_trees)
+                split_args.append(jax_tree)
+                tree_args_statics[argnum] = nonjax_tree
 
             split_kwargs = {}
             for k, v in kwargs.items():
-                if not su.is_structure_tree(v):
-                    jax_tree, nonjax_tree = split_jax_nonjax(v)
-                    split_kwargs[k] = jax_tree
-                    tree_kwargs_statics[k] = nonjax_tree
-                else:
-                    params_buffers, rest = su.split_non_static(v)
-                    split_kwargs[k] = params_buffers
-                    structure_tree_kwargs_statics[k] = rest  
+                jax_tree, nonjax_tree = split_jax_nonjax(v, auto_detect_structure_trees)
+                split_kwargs[k] = jax_tree
+                tree_kwargs_statics[k] = nonjax_tree
 
 
             static_args = [arg if i in static_argnums else None for i, arg in enumerate(split_args)]
@@ -186,11 +221,10 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
                 'static_args': static_args,
                 'static_argnames': static_argnames,
                 'static_kwargs': static_kwargs,
-                'structure_tree_args_statics': structure_tree_args_statics,
                 'tree_args_statics': tree_args_statics,
-                'structure_tree_kwargs_statics': structure_tree_kwargs_statics,
                 'tree_kwargs_statics': tree_kwargs_statics,
                 'static_returns': static_returns,
+                'auto_detect_structure_trees': auto_detect_structure_trees,
             })
 
             # cache miss - define a function to wrap with the base wrapper.
@@ -226,11 +260,8 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
                         if i in static_returns:
                             jax_tree = None
                             nonjax_tree = (v, 'manual_static')
-                        elif su.is_structure_tree(v):
-                            jax_tree, nonjax_tree = su.split_non_static(v)
-                            nonjax_tree = (nonjax_tree, 'structure_tree')
                         else:
-                            jax_tree, nonjax_tree = split_jax_nonjax(v)
+                            jax_tree, nonjax_tree = split_jax_nonjax(v, auto_detect_structure_trees)
                             nonjax_tree = (nonjax_tree, 'discovered_static')
 
                         if cached_calls[cache_key]['returned_structure_statics'] is None:
@@ -271,8 +302,6 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
             for i, (v, static_type) in cached_calls[cache_key]['returned_structure_statics'].items():
                 if static_type == 'manual_static':
                     values[i] = v
-                elif static_type == 'structure_tree':
-                    values[i] = su.merge_trees(values[i], v)
                 elif static_type == 'discovered_static':
                     values[i] = merge_jax_nonjax(values[i], v)
                 else:

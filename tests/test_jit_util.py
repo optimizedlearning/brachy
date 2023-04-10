@@ -419,6 +419,36 @@ class TestStructureUtils(unittest.TestCase):
         assert jnp.allclose(grad['params']['bias'], 2*2*jnp.ones(5)), f"bias: {grad['params']['bias']}"
         assert jnp.allclose(grad['params']['weight'], 2*2*jnp.ones((5,5))), f"bias: {grad['params']['bias']}"
 
+    def test_jit_nested_tree(self):
+
+
+        trace_count = 0
+
+        @jit_util.improved_static(jax.jit)
+        def func(nested_tree, global_config, x):
+            nonlocal trace_count
+            tree = nested_tree['nested']
+            trace_count += 1
+            organizer = su.StateOrganizer(tree, global_config)
+            y = jnp.matmul(x, organizer.weight)+ organizer.bias
+            return {'nested': organizer.get_state()}, y
+
+        lin, global_config = nn.Linear(5,5, rng=jax.random.PRNGKey(0))
+        lin['static'] = {'random': 'value'}
+        global_config['foo'] = 'hihihi'
+        lin['params']['weight'] = jnp.eye(5)
+        lin['params']['bias'] = jnp.ones(5)
+        x = jnp.ones(5)
+
+
+        lin, y = func({'nested': lin}, global_config, x)
+        lin = lin['nested']
+        lin, y = func({'nested': lin}, global_config, x)
+        lin = lin['nested']
+
+        assert jnp.allclose(y, 2*jnp.ones(5)), f"y was: {y}"
+        assert trace_count == 1, f"trace count was: {trace_count}"
+
     def test_jit_static_return(self):
 
         trace_count = 0

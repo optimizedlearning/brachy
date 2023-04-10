@@ -58,13 +58,13 @@ NON_CHILD_KEYS = [
     'apply',
 ]
 
-NON_RETURNED_KEYS = [
+STATIC_KEYS = [
     'static',
     'apply'
 ]
 
-RETURNED_KEYS = [
-    k for k in NON_CHILD_KEYS if k not in NON_RETURNED_KEYS
+JITABLE_KEYS = NON_STATIC_KEYS = [
+    k for k in NON_CHILD_KEYS if k not in STATIC_KEYS
 ]
 
 REQUIRED_KEYS = NON_CHILD_KEYS + [CHILD_KEY]
@@ -224,7 +224,7 @@ def bind_global_config(static_and_apply, global_config: dict):
     return bound
 
 def bind_module(tree: StructureTree, global_config: dict) -> [dict, Callable[[Any], Any]]:
-    init_params, static_and_apply = split_tree(tree, [RETURNED_KEYS,NON_RETURNED_KEYS])
+    init_params, static_and_apply = split_tree(tree, [JITABLE_KEYS,STATIC_KEYS])
     init_params = tree_map(lambda x: jnp.array(x), init_params)
     init_params = tree_map(lambda x: jnp.array(x, dtype=x.dtype), init_params)
 
@@ -355,11 +355,11 @@ def empty_tree(tree=None):
 
 @Partial
 def update_tree(tree, next_tree):
-    return merge_trees(tree, next_tree, keys_to_override=RETURNED_KEYS)
+    return merge_trees(tree, next_tree, keys_to_override=JITABLE_KEYS)
 
 @Partial
 def get_tree_update(tree):
-    return filter_keys(tree, *RETURNED_KEYS)
+    return filter_keys(tree, *JITABLE_KEYS)
 
 @Partial
 def merge_trees(*trees, keys_to_merge=NON_CHILD_KEYS, keys_to_override=NON_CHILD_KEYS):
@@ -394,7 +394,7 @@ def get_params(tree):
     return structure_tree_map(split_func, tree)
 
 def split_non_static(tree):
-    return split_tree(tree, [RETURNED_KEYS, NON_RETURNED_KEYS])
+    return split_tree(tree, [JITABLE_KEYS, STATIC_KEYS])
 
 def split_tree(tree, key_sets=NON_CHILD_KEYS):
     if isinstance(key_sets, str):
