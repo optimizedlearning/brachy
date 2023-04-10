@@ -13,14 +13,14 @@ def init(optax_optim, model_tree, *args, params_filter=su.get_params, params_mer
     organizer.register_buffer(
         'opt_state', opt_state
     )
-    organizer.register_aux(
+    organizer.register_static(
         'opt_apply', optax_optim.update
     )
 
-    organizer.register_aux(
+    organizer.register_static(
         'params_filter', params_filter
     )
-    organizer.register_aux(
+    organizer.register_static(
         'params_merger', params_merger
     )
     

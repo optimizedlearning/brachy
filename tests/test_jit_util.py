@@ -95,7 +95,7 @@ grand_child = {
     'buffers': {
         'g': jnp.array([[33,99,3],[5,6,7]])
     },
-    'aux': {
+    'static': {
         'comment': 'this is a grand child node',
     },
     'apply': apply_grand_child,
@@ -110,7 +110,7 @@ child = {
     'buffers': {
         'g': jnp.array([[1,99,3],[5,6,7]])
     },
-    'aux': {
+    'static': {
         'comment': 'this is a child node',
     },
     'apply': apply_child,
@@ -127,7 +127,7 @@ tree = {
     'buffers': {
         'x': jnp.array([[1,2,3],[5,6,7]])
     },
-    'aux': {
+    'static': {
         'comment': 'this is some text',
         4: 234
     },
@@ -181,22 +181,22 @@ buffers = {
     }
 }
 
-apply_aux = {
+apply_static = {
     'apply': apply,
-    'aux': {
+    'static': {
         'comment': 'this is some text',
         4: 234
     },
     'submodules': {
         'c': {
             'apply': apply_child,
-            'aux': {
+            'static': {
                 'comment': 'this is a child node',
             },
             'submodules': {
                 'g': {
                     'apply': apply_grand_child,
-                    'aux': {
+                    'static': {
                         'comment': 'this is a grand child node',
                     },
                     'submodules': {}
@@ -221,14 +221,14 @@ def grandchild_module():
     buffers = {
         'g': jnp.array([-1,-1,-1,-1,3])
     }
-    aux = {
+    static = {
         'description': 'grandchild module'
     }
 
     tree = {
         'params': params,
         'buffers': buffers,
-        'aux': aux,
+        'static': static,
         'apply': grandchild_apply,
         'submodules': {}
     }
@@ -433,7 +433,7 @@ class TestStructureUtils(unittest.TestCase):
         j_func = jit_util.jit(func, static_argnums=3, static_returns=2)
 
         lin, global_config = nn.Linear(5,5, rng=jax.random.PRNGKey(0))
-        lin['aux'] = {
+        lin['static'] = {
             'number': 10
         }
         global_config['foo'] = 'hihihi'
@@ -445,8 +445,8 @@ class TestStructureUtils(unittest.TestCase):
         state, y, z = j_func(lin, global_config, x, z)
         # state, y, z = j_func(lin, global_config, x, z)
 
-        assert state['aux']['number'] == 10
-        assert not isinstance(state['aux']['number'], Array)
+        assert state['static']['number'] == 10
+        assert not isinstance(state['static']['number'], Array)
 
         assert z['g'] == False
         assert z['f'] == 0

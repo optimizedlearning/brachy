@@ -83,31 +83,11 @@ def improved_static(wrapper, *outer_args, static_argnums=None , static_argnames=
 
     _CACHED_FUNCS = _CACHED_WRAPS[wrapper]
 
-    # outer_static_argnums = static_argnums
-    # outer_static_argnames = static_argnames
-
     # this decorator actually wraps a decorator (the argument "wrapper") itself, so we must return a decorator.
     # this function static_wrapper is what we will return.
     @wraps(wrapper)
     def static_wrapper(fun, *wrapper_args, static_argnums=None , static_argnames=None, static_returns=None, **wrapper_kwargs):
 
-        # # Some checks to allow for default arguments specified in a decorator...
-        # # this might be overly complicated a feature to have...
-        # if outer_static_argnums is not None:
-        #     assert static_argnums is None, "ambiguous setting for static_argnums in wrapper {fun}!"
-        #     static_argnums = outer_static_argnums
-
-        # if outer_static_argnames is not None:
-        #     assert static_argnames is None, "ambiguous setting for static_argnames in wrapper {fun}!"
-        #     static_argnames = outer_static_argnames
-
-        # if len(outer_args) == 0:
-        #     assert len(wrapper_args) == 0, "ambiguous args for wrapper {fun}!"
-        #     wrapper_args = outer_args
-
-        # for k,v in outer_kwargs.items():
-        #     assert k not in wrapper_kwargs, "ambiguous kwargs for wrapper {fun}!"
-        #     wrapper_kwargs[k] = v
 
 
         # check if static_argnums or static_argnames are specified as position arguments.

@@ -27,10 +27,10 @@ def AdamW(model_tree, lr=1.0, betas=(0.9, 0.999), weight_decay=0.01, eps=1e-8, p
     )
 
 
-    organizer.register_aux(
+    organizer.register_static(
         'params_filter', params_filter
     )
-    organizer.register_aux(
+    organizer.register_static(
         'params_merger', params_merger
     )
 

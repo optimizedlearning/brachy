@@ -66,7 +66,7 @@ def simple_ff(organizer, rng=None):
     organizer.set_apply(simple_ff_apply)
 
 
-    organizer.seq[1].register_aux('force_high_precision', True)
+    organizer.seq[1].register_static('force_high_precision', True)
 
 
 @su.organized_apply
@@ -349,7 +349,7 @@ class TestSGD(unittest.TestCase):
                 'x': jnp.ones(2)
             },
             'buffers': {},
-            'aux': {},
+            'static': {},
             'apply': lambda t, g, w: (t, t['params']['x'] * w),
             'submodules': {}
         }
@@ -394,7 +394,7 @@ class TestSGD(unittest.TestCase):
                 'x': jnp.ones(2)
             },
             'buffers': {},
-            'aux': {},
+            'static': {},
             'apply': lambda t, g, w: (t, 0.5*(t['params']['x'] * w)**2),
             'submodules': {}
         }
@@ -446,7 +446,7 @@ class TestSGD(unittest.TestCase):
                 'x': x
             },
             'buffers': {},
-            'aux': {},
+            'static': {},
             'apply': lambda t, g: (t, jnp.abs(t['params']['x'])),
             'submodules': {}
         }
@@ -502,7 +502,7 @@ class TestSGD(unittest.TestCase):
                 'x': jnp.ones(2)
             },
             'buffers': {},
-            'aux': {},
+            'static': {},
             'apply': lambda t, g, w: (t, 0.5*(t['params']['x'] * w)**2),
             'submodules': {}
         }

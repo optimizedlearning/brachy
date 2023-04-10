@@ -67,7 +67,7 @@ def Linear(in_features, out_features, bias=True, dtype=None, rng=None):
     tree = {
         'params': params,
         'buffers': {},
-        'aux': {},
+        'static': {},
         'apply': Linear_apply,
         'submodules': {}
     }
@@ -252,7 +252,7 @@ def Conv2d(
 
     tree = su.fill_tree({
         'params': {},
-        'aux': {
+        'static': {
             'padding': padding,
             'stride': stride,
             'dilation': dilation,
@@ -304,7 +304,7 @@ def Conv2d_apply(tree, global_config, x):
     '''
     weight = tree['params']['weight']
 
-    aux = SimpleNamespace(**tree['aux'])
+    static = SimpleNamespace(**tree['static'])
 
     
 
@@ -314,12 +314,12 @@ def Conv2d_apply(tree, global_config, x):
     conv = jax.lax.conv_general_dilated(
         x,
         weight,
-        window_strides=aux.stride,
-        padding=aux.padding,
+        window_strides=static.stride,
+        padding=static.padding,
         lhs_dilation=None,
-        rhs_dilation=aux.dilation,
+        rhs_dilation=static.dilation,
         dimension_numbers=('NCHW', 'OIHW', 'NCHW'),
-        feature_group_count=aux.feature_group_count,
+        feature_group_count=static.feature_group_count,
         batch_group_count=1,
         precision=None,
         preferred_element_type=None)
@@ -420,7 +420,7 @@ def MultiheadAttention(
 
     organizer = su.StateOrganizer()
 
-    organizer.register_aux('num_heads', num_heads)
+    organizer.register_static('num_heads', num_heads)
 
     # the pytorch implementation is full of random special cases.
     # Let's try to not do that here. This requires one special case
@@ -538,9 +538,9 @@ def BatchNorm(num_features, eps=1e-05, momentum=0.1, affine=True, track_running_
         organizer.register_buffer('running_mean', jnp.zeros(num_features))
         organizer.register_buffer('running_var', jnp.ones(num_features))
 
-    organizer.register_aux('affine', affine)
-    organizer.register_aux('track_running_stats', track_running_stats)
-    organizer.register_aux('axis', axis)
+    organizer.register_static('affine', affine)
+    organizer.register_static('track_running_stats', track_running_stats)
+    organizer.register_static('axis', axis)
 
     return organizer.create_module(BatchNorm_apply)
 

@@ -4,7 +4,7 @@ A structure tree is a dictionary containing keys:
 
 params
 buffers
-aux
+static
 apply
 submodules
 
@@ -54,12 +54,12 @@ STATE_ORGANIZER_RESERVED = [
 NON_CHILD_KEYS = [
     'params',
     'buffers',
-    'aux',
+    'static',
     'apply',
 ]
 
 NON_RETURNED_KEYS = [
-    'aux',
+    'static',
     'apply'
 ]
 
@@ -125,7 +125,7 @@ def tree_value_and_grad(
     fun: Callable,
     output_num: int=0,
     argnums: int=0,
-    split_fn = lambda x: split_tree(x, ['params', ['buffers', 'aux', 'apply']]),
+    split_fn = lambda x: split_tree(x, ['params', ['buffers', 'static', 'apply']]),
     merge_fn = lambda x, y: merge_trees(x, y)
     ):
     def fun_to_differentiate(*args, **kwargs):
@@ -157,7 +157,7 @@ def tree_value_and_grad(
         if 'mixed_precision' in new_tree['buffers']:
             mixed_precision = new_tree['buffers']['mixed_precision']
             grad = uncast_mixed_precision(new_tree, grad)
-            output_type = rest['aux']['mixed_precision']['output_type']
+            output_type = rest['static']['mixed_precision']['output_type']
             output = output.astype(output_type) / mixed_precision['loss_scalar'].astype(output_type)  
 
         final_output = tuple([aux for aux in aux_output[:output_num]] + [output] + [aux for aux in aux_output[output_num:]])
@@ -211,28 +211,28 @@ def apply_and_update_tree(tree: StructureTree, global_config: dict, *args, **kwa
 
 
 
-def bind_global_config(aux_and_apply, global_config: dict):
-    organizer = StateOrganizer(aux_and_apply)
+def bind_global_config(static_and_apply, global_config: dict):
+    organizer = StateOrganizer(static_and_apply)
     def bound(params: PyTree, *args, **kwargs):
-        merged = merge_trees(params, aux_and_apply)
+        merged = merge_trees(params, static_and_apply)
         next_tree, output = apply_tree(merged, global_config, *args, **kwargs)
         next_params = filter_keys(next_tree)
         return next_params, output
-    bound.aux_and_apply = aux_and_apply
+    bound.static_and_apply = static_and_apply
     bound.global_config = global_config
-    bound.bind_global_config = Partial(bind_global_config, aux_and_apply)
+    bound.bind_global_config = Partial(bind_global_config, static_and_apply)
     return bound
 
 def bind_module(tree: StructureTree, global_config: dict) -> [dict, Callable[[Any], Any]]:
-    init_params, aux_and_apply = split_tree(tree, [RETURNED_KEYS,NON_RETURNED_KEYS])
+    init_params, static_and_apply = split_tree(tree, [RETURNED_KEYS,NON_RETURNED_KEYS])
     init_params = tree_map(lambda x: jnp.array(x), init_params)
     init_params = tree_map(lambda x: jnp.array(x, dtype=x.dtype), init_params)
 
 
-    return init_params, bind_global_config(aux_and_apply, global_config)
+    return init_params, bind_global_config(static_and_apply, global_config)
 
 def unbind_module(state, bound):
-    return merge_trees(state, bound.aux_and_apply), bound.global_config
+    return merge_trees(state, bound.static_and_apply), bound.global_config
 
 def is_structure_tree(tree, recurse=False):
     if not isinstance(tree, dict):
@@ -418,10 +418,10 @@ def split_tree(tree, key_sets=NON_CHILD_KEYS):
 def split_params(tree):
     other_keys = [_ for  _ in NON_CHILD_KEYS]
     other_keys.remove('params')
-    other_keys.remove('aux')
+    other_keys.remove('static')
     other_keys.remove('apply')
 
-    return split_tree(tree, key_sets=['params', other_keys, ['aux', 'apply']])
+    return split_tree(tree, key_sets=['params', other_keys, ['static', 'apply']])
 
 
 def _inverse_lookup(tree, name):
@@ -647,10 +647,10 @@ class StateOrganizer:
             k: StateOrganizer(state[CHILD_KEY][k], self.get_global_config()) for k in state[CHILD_KEY]
         }
 
-    def recursive_register_aux(self, name, value):
-        self.register_aux(name, value)
+    def recursive_register_static(self, name, value):
+        self.register_static(name, value)
         for m in self.submodules().values():
-            m.recursive_register_aux(name, value)
+            m.recursive_register_static(name, value)
     
     def __call__(self, *args, **kwargs):
         state = self._state
@@ -683,8 +683,8 @@ class StateOrganizer:
     def register_buffer(self, name, value):
         self._state['buffers'][name] = value
 
-    def register_aux(self, name, value):
-        self._state['aux'][name] = value
+    def register_static(self, name, value):
+        self._state['static'][name] = value
 
     def register_submodule(self, name, value):
         assert _is_valid_submodule(value)

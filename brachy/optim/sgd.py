@@ -12,8 +12,8 @@ def SGD(model_tree, lr=1.0, momentum=0.0, weight_decay=0.0, params_filter=su.get
     )
     organizer.momentum_coef = momentum
     organizer.weight_decay = weight_decay
-    organizer.register_aux('params_filter', params_filter)
-    organizer.register_aux('params_merger', params_merger)
+    organizer.register_static('params_filter', params_filter)
+    organizer.register_static('params_merger', params_merger)
     organizer.lr = lr
     
     return organizer.create_module(SGD_apply)

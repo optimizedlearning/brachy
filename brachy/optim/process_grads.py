@@ -16,7 +16,7 @@ def clip_grads(optimizer, clip_value=1.0, clip_type='per_coordinate'):
             'clip_value': clip_value,
         },
         'buffers': {},
-        'aux': {
+        'static': {
             'clip_type': clip_type
         },
         'submodules': {
@@ -35,7 +35,7 @@ def clip_apply(
     *args,
     **kwargs):
 
-    clip_type = opt_tree['aux']['clip_type']
+    clip_type = opt_tree['static']['clip_type']
     supported_clip_types = ['per_coordinate']
     if clip_type not in supported_clip_types:
         raise ValueError(f"unsupported clip_type: {clip_type}. Supported types are: {supported_clip_types}")

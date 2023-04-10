@@ -55,10 +55,10 @@ def high_precision_apply(apply):
 
 def cast_node(node, path):
     node = su.copy_to_leaf(node)
-    node['aux']['mixed_precision'] = {
+    node['static']['mixed_precision'] = {
         'old_apply': node['apply']
     }
-    if 'force_high_precision' in node['aux'] and node['aux']['force_high_precision']:
+    if 'force_high_precision' in node['static'] and node['static']['force_high_precision']:
         node['apply'] = high_precision_apply(node['apply'])
         return node
 
@@ -75,7 +75,7 @@ def cast_tree_f16(tree):
     return half_tree
         
 def cast_back(tree):
-    half_params_buffers, rest = su.split_tree(tree, [['params', 'buffers'], ['aux', 'apply']])
+    half_params_buffers, rest = su.split_tree(tree, [['params', 'buffers'], ['static', 'apply']])
     mixed_precision_buffers = half_params_buffers['buffers']['mixed_precision']
     del half_params_buffers['buffers']['mixed_precision']
     types = mixed_precision_buffers['types']
@@ -106,13 +106,13 @@ def mixed_precision_loss(loss):#, loss_scalar=1.0, output_type=jnp.float32):
     def mixed_loss(tree, *args, **kwargs):
 
         loss_scalar = tree['buffers']['mixed_precision']['loss_scalar']
-        output_type = tree['aux']['mixed_precision']['output_type']
+        output_type = tree['static']['mixed_precision']['output_type']
         # half_tree = su.structure_tree_map(cast_node, float_tree)
         # half_tree['buffers']['mixed_precision'] = {
         #     'loss_scalar': jnp.array(loss_scalar, dtype=jnp.float16),
         # }
 
-        # half_tree['aux']['mixed_precision'] = {
+        # half_tree['static']['mixed_precision'] = {
         #     'output_type': output_type
         # }
         tree = su.map_params_buffers(lambda x: scale_in_backwards(x, 1.0/loss_scalar), tree)
@@ -133,7 +133,7 @@ def mixed_precision_tree(tree_and_config, loss_scalar=1.0, output_type=jnp.float
         'loss_scalar': jnp.array(loss_scalar, dtype=jnp.float16),
     }
 
-    half_tree['aux']['mixed_precision'] = {
+    half_tree['static']['mixed_precision'] = {
         'output_type': output_type
     }
 

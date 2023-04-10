@@ -94,7 +94,7 @@ grand_child = {
     'buffers': {
         'g': jnp.array([[33,99,3],[5,6,7]])
     },
-    'aux': {
+    'static': {
         'comment': 'this is a grand child node',
     },
     'apply': apply_grand_child,
@@ -109,7 +109,7 @@ child = {
     'buffers': {
         'g': jnp.array([[1,99,3],[5,6,7]])
     },
-    'aux': {
+    'static': {
         'comment': 'this is a child node',
     },
     'apply': apply_child,
@@ -126,7 +126,7 @@ tree = {
     'buffers': {
         'x': jnp.array([[1,2,3],[5,6,7]])
     },
-    'aux': {
+    'static': {
         'comment': 'this is some text',
         4: 234
     },
@@ -180,22 +180,22 @@ buffers = {
     }
 }
 
-apply_aux = {
+apply_static = {
     'apply': apply,
-    'aux': {
+    'static': {
         'comment': 'this is some text',
         4: 234
     },
     'submodules': {
         'c': {
             'apply': apply_child,
-            'aux': {
+            'static': {
                 'comment': 'this is a child node',
             },
             'submodules': {
                 'g': {
                     'apply': apply_grand_child,
-                    'aux': {
+                    'static': {
                         'comment': 'this is a grand child node',
                     },
                     'submodules': {}
@@ -220,14 +220,14 @@ def grandchild_module():
     buffers = {
         'g': jnp.array([-1,-1,-1,-1,3])
     }
-    aux = {
+    static = {
         'description': 'grandchild module'
     }
 
     tree = {
         'params': params,
         'buffers': buffers,
-        'aux': aux,
+        'static': static,
         'apply': grandchild_apply,
         'submodules': {}
     }
@@ -343,7 +343,7 @@ class TestStructureUtils(unittest.TestCase):
         @su.organized_init_with_rng
         def outer(organizer, rng=None):
             organizer.bar = jnp.ones(5)
-            organizer.register_aux('random', rng_util.uniform(shape=(2,2)))
+            organizer.register_static('random', rng_util.uniform(shape=(2,2)))
             organizer.submodule = mutating_state(5)
 
             organizer.set_forward(outer_apply)
@@ -366,7 +366,7 @@ class TestStructureUtils(unittest.TestCase):
         _, subkey = jax.random.split(subkey)
 
 
-        assert jnp.allclose(tree['aux']['random'], jax.random.uniform(subkey, shape=(2,2)))
+        assert jnp.allclose(tree['static']['random'], jax.random.uniform(subkey, shape=(2,2)))
 
         state, apply = su.bind_module(tree, global_config)
 
@@ -402,19 +402,19 @@ class TestStructureUtils(unittest.TestCase):
         emptied_tree_ref = {
             'params': {},
             'buffers': {},
-            'aux': {},
+            'static': {},
             'apply': lambda t, g, x: x,
             'submodules': {
                 'c': {
                     'params': {},
                     'buffers': {},
-                    'aux': {},
+                    'static': {},
                     'apply': lambda t, g, x: x,
                     'submodules': {
                         'g': {
                             'params': {},
                             'buffers': {},
-                            'aux': {},
+                            'static': {},
                             'apply': lambda t, g, x: x,
                             'submodules': {},
                         }
@@ -432,7 +432,7 @@ class TestStructureUtils(unittest.TestCase):
         min_empty_ref = {
             'params': {},
             'buffers': {},
-            'aux': {},
+            'static': {},
             'apply': lambda t, g, x: x,
             'submodules': {}
         }
@@ -446,7 +446,7 @@ class TestStructureUtils(unittest.TestCase):
                 'b': jnp.array([1,2])
             },
             'buffers': {'p': jnp.array(0)},
-            'aux': {},
+            'static': {},
             'apply': None,
             'submodules': {
                 'k': {
@@ -454,7 +454,7 @@ class TestStructureUtils(unittest.TestCase):
                         'b': {'l': jnp.array([4,3])}
                     },
                     'buffers': {'l': jnp.array(3)},
-                    'aux': {},
+                    'static': {},
                     'apply': None,
                     'submodules': {}
                 }
@@ -467,7 +467,7 @@ class TestStructureUtils(unittest.TestCase):
                 'b': jnp.array([2,3])
             },
             'buffers': {'p': jnp.array(1)},
-            'aux': {},
+            'static': {},
             'apply': None,
             'submodules': {
                 'k': {
@@ -475,7 +475,7 @@ class TestStructureUtils(unittest.TestCase):
                         'b': {'l': jnp.array([5,4])}
                     },
                     'buffers': {'l': jnp.array(4)},
-                    'aux': {},
+                    'static': {},
                     'apply': None,
                     'submodules': {}
                 }
@@ -550,11 +550,11 @@ class TestStructureUtils(unittest.TestCase):
 
     def test_split_merge_filter(self):
 
-        s_params, s_buffers, s_apply_aux = su.split_tree(tree, ['params', 'buffers', ['apply', 'aux']])
+        s_params, s_buffers, s_apply_static = su.split_tree(tree, ['params', 'buffers', ['apply', 'static']])
 
-        merged = su.merge_trees(s_params, s_buffers, s_apply_aux)
+        merged = su.merge_trees(s_params, s_buffers, s_apply_static)
 
-        limited_merged = su.merge_trees(s_params, s_buffers, s_apply_aux, keys_to_merge=['params', 'buffers'])
+        limited_merged = su.merge_trees(s_params, s_buffers, s_apply_static, keys_to_merge=['params', 'buffers'])
         filtered = su.filter_keys(tree)
 
 
@@ -579,7 +579,7 @@ class TestStructureUtils(unittest.TestCase):
 
         self.assertTrue(same_dicts(params, s_params))
         self.assertTrue(same_dicts(buffers, s_buffers))
-        self.assertTrue(same_dicts(apply_aux, s_apply_aux))
+        self.assertTrue(same_dicts(apply_static, s_apply_static))
 
         self.assertTrue(same_trees(merged, tree))
 

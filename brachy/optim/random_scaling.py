@@ -14,9 +14,9 @@ def random_scale(optimizer, model_tree, distribution=jax.random.uniform, interpo
 
     organizer.register_buffer('rng', rng)
     organizer.optimizer = optimizer
-    organizer.register_aux('distribution', distribution)
-    organizer.register_aux('params_filter', params_filter)
-    organizer.register_aux('params_merger',  params_merger)
+    organizer.register_static('distribution', distribution)
+    organizer.register_static('params_filter', params_filter)
+    organizer.register_static('params_merger',  params_merger)
 
     params, rest = params_filter(model_tree)
 
@@ -24,7 +24,7 @@ def random_scale(optimizer, model_tree, distribution=jax.random.uniform, interpo
         params
     )
     
-    organizer.register_aux('interpolate', interpolate)
+    organizer.register_static('interpolate', interpolate)
 
     return organizer.create_module(random_scale_apply)
 
