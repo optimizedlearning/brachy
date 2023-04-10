@@ -254,13 +254,43 @@ class TestSGD(unittest.TestCase):
 
         assert jit_canary == 1
 
+    def test_mixed_loss(self):
+        rng = jax.random.PRNGKey(0)
+        tree, global_config = nn.Linear(4,1,bias=False, rng=rng)
+
+        mixed_tree, global_config = mixed_precision_tree((tree, global_config), loss_scalar=100.0)
+
+
+        # opt_tree, opt_config = SGD(tree, lr=0.0001, momentum=0.9, weight_decay=0.1)
+
+        # mixed_opt_tree, mixed_opt_config = SGD(mixed_tree, lr=0.0001, momentum=0.9, weight_decay=0.1)
+
+        def loss(tree, global_config, x):
+            tree, value = su.apply_tree(tree, global_config, x)
+            return  tree,  0.1*jnp.sum(value)**2
+
+        mixed_loss = mixed_precision_loss(loss)
+
+        value_grad_fn = su.tree_value_and_grad(loss)
+
+        mixed_value_grad_fn = su.tree_value_and_grad(mixed_loss)
+
+        x = jnp.ones(shape=(1,4)) * jnp.sqrt(2)
+        (tree, value), grad = value_grad_fn(tree, global_config, x)
+
+        (mixed_tree, mixed_value), mixed_grad = mixed_value_grad_fn(mixed_tree, global_config, x)
+
+        assert jnp.allclose(grad['params']['weight'], mixed_grad['params']['weight'], rtol=1e-3), f"{grad['params']['weight']} not close to {mixed_grad['params']['weight']}" 
+        assert jnp.allclose(value, mixed_value, rtol=1e-4), f"{value} not close to {mixed_value}"
+
+        
 
     def test_mixed_precision(self):
 
         rng = jax.random.PRNGKey(0)
         tree, global_config = simple_ff(rng=rng)
 
-        mixed_tree, global_config = mixed_precision_tree((tree, global_config), loss_scalar=16.0)
+        mixed_tree, global_config = mixed_precision_tree((tree, global_config), loss_scalar=128.0)
 
 
         opt_tree, opt_config = SGD(tree, lr=0.0001, momentum=0.9, weight_decay=0.1)
@@ -271,9 +301,11 @@ class TestSGD(unittest.TestCase):
             tree, value = su.apply_tree(tree, global_config, x)
             return  tree,  0.1*value**2
 
+        mixed_loss = mixed_precision_loss(loss)
+
         value_grad_fn = su.tree_value_and_grad(loss)
 
-        mixed_value_grad_fn = su.tree_value_and_grad(mixed_precision_loss(loss))
+        mixed_value_grad_fn = su.tree_value_and_grad(mixed_loss)
 
 
         def train_step(opt_tree, opt_config, tree, global_config, x):

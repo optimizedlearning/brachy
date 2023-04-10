@@ -100,24 +100,17 @@ def scale_in_backwards_bwd(s, g):
 
 scale_in_backwards.defvjp(scale_in_backwards_fwd, scale_in_backwards_bwd)
 
+
 # currently assumes first argument  of loss is the tree and second return value is the loss.
-def mixed_precision_loss(loss):#, loss_scalar=1.0, output_type=jnp.float32):
-    # loss_scalar = jnp.array(loss_scalar)
+def mixed_precision_loss(loss):
     def mixed_loss(tree, *args, **kwargs):
 
         loss_scalar = tree['buffers']['mixed_precision']['loss_scalar']
         output_type = tree['static']['mixed_precision']['output_type']
-        # half_tree = su.structure_tree_map(cast_node, float_tree)
-        # half_tree['buffers']['mixed_precision'] = {
-        #     'loss_scalar': jnp.array(loss_scalar, dtype=jnp.float16),
-        # }
 
-        # half_tree['static']['mixed_precision'] = {
-        #     'output_type': output_type
-        # }
-        tree = su.map_params_buffers(lambda x: scale_in_backwards(x, 1.0/loss_scalar), tree)
+        tree = su.map_params_buffers(lambda x: scale_in_backwards(x, 1.0/loss_scalar.astype(output_type)), tree)
         (tree, value, *rest) = loss(tree, *args, **kwargs)
-        value =  scale_in_backwards(value, loss_scalar.astype(output_type))
+        value =  scale_in_backwards(value, loss_scalar)
         return (tree, value, *rest)
     return mixed_loss
 

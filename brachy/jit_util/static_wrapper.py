@@ -68,8 +68,7 @@ def split_jax_nonjax(tree, auto_detect_structure_trees=True):
         # if it's a structure tree, we split out the static parts.
         if su.is_structure_tree(x) and auto_detect_structure_trees:
             def filter_statics(node, path=None):
-                node = dict(node)
-                node[su.CHILD_KEY] = {}
+                node = su.copy_to_leaf(node)
                 for k in node:
                     if k not in su.STATIC_KEYS:
                         node[k] = tree_map(lambda x: None, node[k])
@@ -86,8 +85,7 @@ def split_jax_nonjax(tree, auto_detect_structure_trees=True):
         # if it's a structure tree, we split out the static parts.
         if su.is_structure_tree(x) and auto_detect_structure_trees:
             def filter_non_statics(node, path=None):
-                node = dict(node)
-                node[su.CHILD_KEY] = {}
+                node = su.copy_to_leaf(node)
                 for k in node:
                     if k in su.STATIC_KEYS:
                         node[k] = tree_map(lambda x: None, node[k])

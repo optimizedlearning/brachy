@@ -70,35 +70,6 @@ JITABLE_KEYS = NON_STATIC_KEYS = [
 REQUIRED_KEYS = NON_CHILD_KEYS + [CHILD_KEY]
 
 
-def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
-        outnum: int = 0, has_aux: bool = False, holomorphic: bool = False,
-        allow_int: bool = False,
-        reduce_axes: Sequence[AxisName] = ()) -> Callable:
-    if outnum == 0:
-        return jax.value_and_grad(fun, argnums, has_aux, holomorphic, allow_int, reduce_axes)
-    
-    def reorded_fun(*args, **kwargs):
-        output = fun(*args, **kwargs)
-
-        output_to_diff = output[outnum]
-
-        other_indices = list(range(len(output)))
-        other_indices.pop(output_num)
-    
-        other_outputs = [output[i] for i in extra_indices]
-        reordeded_output = output[outnum], tuple(other_outputs)
-
-    raw_value_and_grad_fn = jax.value_and_grad(reordered_fun, argnums, True, holomorphic, allow_int, reduce_axes)
-
-
-    def value_and_grad_fn(*args, **kwargs):
-        (output, aux_output), grad = raw_value_and_grad_fn(*args, **kwargs)
-
-
-        final_output = tuple([aux for aux in aux_output[:output_num]] + [output] + [aux for aux in aux_output[output_num:]])
-
-        return final_output, grad
-
 def map_params_buffers(f, tree):
     def node_f(node, path=None):
         node = dict(node)
@@ -107,18 +78,6 @@ def map_params_buffers(f, tree):
         node['submodules'] = {}
         return node
     return structure_tree_map(node_f, tree)
-
-def uncast_mixed_precision(state, grad):
-    # types = state['buffers']['mixed_precision']['types']
-    loss_scalar = state['buffers']['mixed_precision']['loss_scalar']
-
-    def uncast_and_scale(g, path):# t, path):
-        g = copy_to_leaf(g)
-        # t = copy_to_leaf(t)
-        g['params'] = tree_map(lambda x: x / loss_scalar.astype(x.dtype), g['params'])
-        return g
-
-    return structure_tree_map(uncast_and_scale, grad)#, types)
 
 # TODO: allow a list of argnums
 def tree_value_and_grad(
@@ -137,14 +96,10 @@ def tree_value_and_grad(
         tree, *output = fun(*args, **kwargs)
         output_to_diff = output[output_num]
 
-        if 'mixed_precision' in tree['buffers']:
-            output_to_diff = output_to_diff * tree['buffers']['mixed_precision']['loss_scalar']
-
         extra_indices = list(range(len(output)))
         extra_indices.pop(output_num)
         output = [tree] + [output[i] for i in extra_indices]
         return output_to_diff,  tuple(output)
-       
 
     prelim_value_and_grad_fn = jax.value_and_grad(fun_to_differentiate, argnums=argnums, has_aux=True)
 
@@ -154,51 +109,12 @@ def tree_value_and_grad(
         kwargs['_structure_tree_nondiff_'] = rest
         args[argnums] = tree
         (output, (new_tree, *aux_output)), grad = prelim_value_and_grad_fn(*args, **kwargs)
-        if 'mixed_precision' in new_tree['buffers']:
-            mixed_precision = new_tree['buffers']['mixed_precision']
-            grad = uncast_mixed_precision(new_tree, grad)
-            output_type = rest['static']['mixed_precision']['output_type']
-            output = output.astype(output_type) / mixed_precision['loss_scalar'].astype(output_type)  
 
         final_output = tuple([aux for aux in aux_output[:output_num]] + [output] + [aux for aux in aux_output[output_num:]])
 
         return (new_tree, *final_output), grad
 
     return value_and_grad_fn 
-
-def state_value_and_grad(fun, output_num=0):
-    
-    def processed_grad_fn(state, *args, **kwargs):
-        params, buffers = split_tree(state, ['params', 'buffers'])
-
-        def fun_to_differentiate(params):
-            state = merge_trees(params, buffers)
-            state, *output = fun(state, *args, **kwargs)
-            output_to_diff = output[output_num]
-
-            if 'mixed_precision' in state['buffers']:
-                output_to_diff = output_to_diff * state['buffers']['mixed_precision']['loss_scalar']
-
-            extra_indices = list(range(len(output)))
-            extra_indices.pop(output_num)
-            output = [state] + [output[i] for i in extra_indices]
-            return output_to_diff,  tuple(output)
-
-        grad_fn = jax.value_and_grad(fun_to_differentiate, has_aux=True)
-
-        (output, (new_state, *aux_output)), grad = grad_fn(params)
-
-        if 'mixed_precision' in new_state['buffers']:
-            mixed_precision = new_state['buffers']['mixed_precision']
-            grad = uncast_mixed_precision(new_state, grad)
-            output = output.astype(mixed_precision['output_type'].dtype) / mixed_precision['loss_scalar'].astype(mixed_precision['output_type'].dtype)
-
-
-        final_output = tuple([aux for aux in aux_output[:output_num]] + [output] + [aux for aux in aux_output[output_num:]])
-
-        return (new_state, *final_output), grad
-
-    return processed_grad_fn
 
 
 def apply_tree(tree: StructureTree, global_config: dict, *args, **kwargs) -> [StructureTree, PyTree]:
