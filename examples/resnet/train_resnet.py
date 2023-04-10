@@ -26,6 +26,7 @@ from jax.tree_util import tree_map, Partial
 from brachy.optim.sgd import SGD
 
 from brachy.optional_module import optional_module
+from brachy import jit_util
 import wandb
 
 
@@ -86,8 +87,8 @@ def main():
 
     opt_tree, opt_config = SGD(model_tree, lr=args.lr, momentum=0.9, weight_decay=5e-4)
 
-    train_step_jit = su.jit(train_step, donate_argnums=(0, 2), static_argnums=(1,3))
-    test_step_jit = su.jit(test_step, static_argnums=1)
+    train_step_jit = jit_util.jit(train_step, donate_argnums=(0, 2), static_argnums=(1,3))
+    test_step_jit = jit_util.jit(test_step, static_argnums=1)
 
 
     wandb.init(project="jax_resnet")

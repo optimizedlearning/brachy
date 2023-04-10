@@ -19,6 +19,7 @@ from brachy import structure_util as su
 from brachy import  optim
 from brachy.nn import functional as F
 from brachy.optional_module import optional_module
+from brachy import jit_util
 
 import c4_loader 
 
@@ -167,7 +168,7 @@ def train_loop(
     lr_scheduler = get_lr_scheduler(config)
 
     # JIT compile the train step.
-    train_step_jit = su.jit(train_step, donate_argnums=(0,2), static_argnums=(1,3))
+    train_step_jit = jit_util.jit(train_step, donate_argnums=(0,2), static_argnums=(1,3))
 
     # statistics to track during training.
     token_count = jnp.array(0.0) # this prevents the jit from tracing again in the second round.
