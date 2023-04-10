@@ -41,7 +41,7 @@ def AttentionBlock(organizer, config, rng=None):
     # numerical instability. If we turn off mixed precision training only for the
     # layer norms, then the model trains properly, and each iteration is >2x faster
     # than the full precision model.
-    organizer.ln.register_aux('force_high_precision', True)
+    organizer.ln.register_static('force_high_precision', True)
 
     organizer.set_apply(AttentionBlock_apply)
 
